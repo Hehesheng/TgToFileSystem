@@ -1,0 +1,5 @@
+toml
+telethon
+# python-socks[asyncio]
+fastapi
+uvicorn[standard]
