@@ -4,8 +4,9 @@ from pydantic import BaseModel
 
 class TgToFileSystemParameter(BaseModel):
     class BaseParameter(BaseModel):
-        name: str
+        salt: str
         port: int
+        timeit_enable: bool
     base: BaseParameter
 
     class ApiParameter(BaseModel):

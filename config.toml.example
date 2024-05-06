@@ -1,0 +1,14 @@
+[base]
+salt = "AnyTokenYouWanted"
+port = 7777
+timeit_enable = false
+
+[tgApi]
+api_id = int_app_id_from_tg
+api_hash = "api_hash_from_tg"
+
+[proxy]
+enable = false
+proxy_type = "socks5"
+addr = "172.25.32.1"
+port = 7890
