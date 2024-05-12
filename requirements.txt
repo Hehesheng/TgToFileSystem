@@ -3,3 +3,5 @@ telethon
 # python-socks[asyncio]
 fastapi
 uvicorn[standard]
+streamlit
+qrcode

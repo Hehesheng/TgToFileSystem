@@ -1,4 +1,6 @@
 import toml
+
+import functools
 from pydantic import BaseModel
 
 
@@ -21,10 +23,8 @@ class TgToFileSystemParameter(BaseModel):
         port: int
     proxy: TgProxyParameter
 
-__cache_res = None
+@functools.lru_cache
 def get_TgToFileSystemParameter(path: str = "./config.toml", force_reload: bool = False) -> TgToFileSystemParameter:
-    global __cache_res
-    if __cache_res is not None and not force_reload:
-        return __cache_res
-    __cache_res = TgToFileSystemParameter.model_validate(toml.load(path))
-    return __cache_res
+    if force_reload:
+        get_TgToFileSystemParameter.cache_clear()
+    return TgToFileSystemParameter.model_validate(toml.load(path))

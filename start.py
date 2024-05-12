@@ -1,5 +1,4 @@
 import asyncio
-import time
 import json
 
 import uvicorn
@@ -16,6 +15,7 @@ from TgFileSystemClientManager import TgFileSystemClientManager
 from TgFileSystemClient import TgFileSystemClient
 
 clients_mgr: TgFileSystemClientManager = None
+web_front_task = None
 
 
 @asynccontextmanager
@@ -23,6 +23,18 @@ async def lifespan(app: FastAPI):
     global clients_mgr
     param = configParse.get_TgToFileSystemParameter()
     clients_mgr = TgFileSystemClientManager(param)
+
+    async def run_web_server():
+        cmd = "streamlit run ./web_streamlit.py --server.port 2000"
+        proc = await asyncio.create_subprocess_shell(cmd, stdout=asyncio.subprocess.PIPE,
+                                              stderr=asyncio.subprocess.PIPE)
+        stdout, stderr = await proc.communicate()
+        print(f'[{cmd!r} exited with {proc.returncode}]')
+        if stdout:
+            print(f'[stdout]\n{stdout.decode()}')
+        if stderr:
+            print(f'[stderr]\n{stderr.decode()}')
+    web_front_task = asyncio.create_task(run_web_server())
     yield
 
 app = FastAPI(lifespan=lifespan)
@@ -34,6 +46,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.post("/tg/api/v1/file/login")
+@apiutils.atimeit
+async def login_new_tg_file_client():
+    raise NotImplementedError
 
 
 class TgToFileListRequestBody(BaseModel):
@@ -75,18 +93,12 @@ async def get_tg_file_list(body: TgToFileListRequestBody):
         return Response(json.dumps(response_dict), status_code=status.HTTP_200_OK)
     except Exception as err:
         print(f"{err=}")
-        return Response(f"{err=}", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return Response(json.dumps({"detail": f"{err=}"}), status_code=status.HTTP_404_NOT_FOUND)
 
 
 @app.get("/tg/api/v1/file/msg")
 @apiutils.atimeit
 async def get_tg_file_media_stream(token: str, cid: int, mid: int, request: Request):
-    async def get_msg_media_range_requests(client: TgFileSystemClient, msg: types.Message, start: int, end: int):
-        MAX_CHUNK_SIZE = 1024 * 1024
-        pos = start
-        async for chunk in client.client.iter_download(msg, offset=pos, chunk_size=min(end + 1 - pos, MAX_CHUNK_SIZE)):
-            pos = pos + len(chunk)
-            yield chunk.tobytes()
     msg_id = mid
     chat_id = cid
     headers = {
@@ -109,26 +121,28 @@ async def get_tg_file_media_stream(token: str, cid: int, mid: int, request: Requ
         status_code = status.HTTP_200_OK
         mime_type = msg.media.document.mime_type
         headers["content-type"] = mime_type
+        # headers["content-length"] = str(file_size)
         file_name = apiutils.get_message_media_name(msg)
         if file_name == "":
             maybe_file_type = mime_type.split("/")[-1]
             file_name = f"{chat_id}.{msg_id}.{maybe_file_type}"
-        headers["Content-Disposition"] = f'Content-Disposition: inline; filename="{file_name}"'
+        headers[
+            "Content-Disposition"] = f'Content-Disposition: inline; filename="{file_name.encode("utf-8")}"'
 
         if range_header is not None:
             start, end = apiutils.get_range_header(range_header, file_size)
             size = end - start + 1
-            headers["content-length"] = str(size)
+            # headers["content-length"] = str(size)
             headers["content-range"] = f"bytes {start}-{end}/{file_size}"
             status_code = status.HTTP_206_PARTIAL_CONTENT
         return StreamingResponse(
-            get_msg_media_range_requests(client, msg, start, end),
+            client.streaming_get_iter(msg, start, end),
             headers=headers,
             status_code=status_code,
         )
     except Exception as err:
         print(f"{err=}")
-        return Response(f"{err=}", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return Response(json.dumps({"detail": f"{err=}"}), status_code=status.HTTP_404_NOT_FOUND)
 
 
 if __name__ == "__main__":

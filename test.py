@@ -1,3 +1,6 @@
+import time
+import asyncio
+
 from telethon import TelegramClient
 
 import configParse
@@ -6,15 +9,22 @@ param = configParse.get_TgToFileSystemParameter()
 # Remember to use your own values from my.telegram.org!
 api_id = param.tgApi.api_id
 api_hash = param.tgApi.api_hash
-client = TelegramClient('anon', api_id, api_hash, proxy={
+client1 = TelegramClient('anon', api_id, api_hash, proxy={
+    # 'proxy_type': 'socks5',
+    # 'addr': '172.25.32.1',
+    # 'port': 7890,
+})
+client2 = TelegramClient('anon1', api_id, api_hash, proxy={
     'proxy_type': 'socks5',
     'addr': '172.25.32.1',
     'port': 7890,
 })
+# client.session.set_dc(2, "91.108.56.198", 443)
 # client = TelegramClient('anon', api_id, api_hash, proxy=("socks5", '127.0.0.1', 7890))
 # proxy=("socks5", '127.0.0.1', 4444)
 
-async def main():
+
+async def main(client):
     # Getting information about yourself
     me = await client.get_me()
 
@@ -71,7 +81,23 @@ async def main():
         # print(message.stringify())
         # print(message.to_json())
         # print(message.to_dict())
-        # await client.download_media(message)
+        async def download_task(s: int):
+            last_p = 0
+            last_t = time.time()
+            def progress_callback(p, file_size):
+                nonlocal last_p, last_t
+                t = time.time()
+                bd = p-last_p
+                td = t-last_t
+                print(f"{s}:avg:{bd/td/1024:>10.2f}kbps,{p/1024/1024:>7.2f}/{file_size/1024/1024:>7.2f}/{p/file_size:>5.2%}")
+                last_p = p
+                last_t = time.time()
+            await client.download_media(message, progress_callback=progress_callback )
+        t_list = []
+        # for i in range(4):
+        #     ti = client.loop.create_task(download_task(i))
+        #     t_list.append(ti)
+        await asyncio.gather(*t_list)
 
         # You can download media from messages, too!
         # The method will return the path where the file was saved.
@@ -79,8 +105,16 @@ async def main():
         #     path = await message.download_media()
         #     print('File saved to', path)  # printed after download is done
 
-with client:
-    client.loop.run_until_complete(main())
+# with client:
+#     client.loop.run_until_complete(main())
+try:
+    client1.start()
+    # client2.start()
+    client1.loop.run_until_complete(main(client1))
+    # client2.loop.run_until_complete(main(client2))
+finally:
+    client1.disconnect()
+    # client2.disconnect()
 
 
 async def start_tg_client(param: configParse.TgToFileSystemParameter):

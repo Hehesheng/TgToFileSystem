@@ -32,13 +32,13 @@ class UserManager(object):
         self.con.close()
 
     def update_user(self) -> None:
-        raise NotImplemented
+        raise NotImplementedError
 
     def update_message(self) -> None:
-        raise NotImplemented
+        raise NotImplementedError
 
     def get_user_info() -> None:
-        raise NotImplemented
+        raise NotImplementedError
 
     def _table_has_been_inited(self) -> bool:
         res = self.cur.execute("SELECT name FROM sqlite_master")
