@@ -2,6 +2,7 @@ __pycache__
 .venv
 .vscode
 *.session
+*.session-journal
 *.toml
 *.db
 *.service

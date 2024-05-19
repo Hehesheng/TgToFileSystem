@@ -3,8 +3,8 @@ import time
 import hashlib
 import os
 
-from TgFileSystemClient import TgFileSystemClient
-from UserManager import UserManager
+from backend.TgFileSystemClient import TgFileSystemClient
+from backend.UserManager import UserManager
 import configParse
 
 
@@ -21,7 +21,8 @@ class TgFileSystemClientManager(object):
         pass
 
     def check_client_session_exist(self, client_id: str) -> bool:
-        return os.path.isfile(client_id + '.session')
+        session_db_file = f"{os.path.dirname(__file__)}/db/{client_id}.session"
+        return os.path.isfile(session_db_file)
 
     def generate_client_id(self) -> str:
         return hashlib.md5(
@@ -30,7 +31,7 @@ class TgFileSystemClientManager(object):
     def create_client(self, client_id: str = None) -> TgFileSystemClient:
         if client_id is None:
             client_id = self.generate_client_id()
-        client = TgFileSystemClient(client_id, self.param)
+        client = TgFileSystemClient(client_id, self.param, self.db)
         return client
 
     def register_client(self, client: TgFileSystemClient) -> bool:
@@ -56,8 +57,3 @@ class TgFileSystemClientManager(object):
             self.register_client(client)
         return client
 
-
-if __name__ == "__main__":
-    import configParse
-    # t: TgFileSystemClient = TgFileSystemClient(configParse.get_TgToFileSystemParameter())
-    print(f"{t.session_name=}")

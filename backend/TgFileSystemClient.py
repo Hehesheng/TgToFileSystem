@@ -4,16 +4,18 @@ import bisect
 import time
 import re
 import rsa
+import os
 import functools
 import collections
 import traceback
 from collections import OrderedDict
 from typing import Union, Optional
 
-from telethon import TelegramClient, types, hints
+from telethon import TelegramClient, types, hints, events
 
 import configParse
-import apiutils
+from backend import apiutils
+from backend.UserManager import UserManager
 
 
 class TgFileSystemClient(object):
@@ -128,6 +130,15 @@ class TgFileSystemClient(object):
                 return None
             return None
 
+        def _remove_pop_chunk(self, pop_chunk: 'TgFileSystemClient.MediaChunkHolder') -> None:
+            self.chunk_cache[pop_chunk.chat_id][pop_chunk.msg_id].remove(
+                pop_chunk.start)
+            self.current_cache_size -= pop_chunk.target_len
+            if len(self.chunk_cache[pop_chunk.chat_id][pop_chunk.msg_id]) == 0:
+                self.chunk_cache[pop_chunk.chat_id].pop(pop_chunk.msg_id)
+                if len(self.chunk_cache[pop_chunk.chat_id]) == 0:
+                    self.chunk_cache.pop(pop_chunk.chat_id)
+
         def get_media_chunk(self, msg: types.Message, start: int, lru: bool = True) -> Optional['TgFileSystemClient.MediaChunkHolder']:
             res = self._get_media_chunk_cache(msg, start)
             if res is None:
@@ -137,27 +148,36 @@ class TgFileSystemClient(object):
             return res
 
         def set_media_chunk(self, chunk: 'TgFileSystemClient.MediaChunkHolder') -> None:
-            if self.chunk_cache.get(chunk.chat_id) is None:
+            cache_chat = self.chunk_cache.get(chunk.chat_id)
+            if cache_chat is None:
                 self.chunk_cache[chunk.chat_id] = {}
-            if self.chunk_cache[chunk.chat_id].get(chunk.msg_id) is None:
-                self.chunk_cache[chunk.chat_id][chunk.msg_id] = []
+                cache_chat = self.chunk_cache[chunk.chat_id]
+            cache_msg = cache_chat.get(chunk.msg_id)
+            if cache_msg is None:
+                cache_chat[chunk.msg_id] = []
+                cache_msg = cache_chat[chunk.msg_id]
             chunk.chunk_id = self.unique_chunk_id
             self.unique_chunk_id += 1
-            bisect.insort(self.chunk_cache[chunk.chat_id][chunk.msg_id], chunk)
+            bisect.insort(cache_msg, chunk)
             self.chunk_lru[chunk.chunk_id] = chunk
             self.current_cache_size += chunk.target_len
             while self.current_cache_size > self.MAX_CACHE_SIZE:
                 dummy = self.chunk_lru.popitem(last=False)
-                pop_chunk = dummy[1]
-                self.chunk_cache[pop_chunk.chat_id][pop_chunk.msg_id].remove(
-                    pop_chunk.start)
-                self.current_cache_size -= pop_chunk.target_len
-                if len(self.chunk_cache[pop_chunk.chat_id][pop_chunk.msg_id]) == 0:
-                    self.chunk_cache[pop_chunk.chat_id].pop(pop_chunk.msg_id)
-                    if len(self.chunk_cache[pop_chunk.chat_id]) == 0:
-                        self.chunk_cache.pop(pop_chunk.chat_id)
+                self._remove_pop_chunk(dummy[1])
 
-    MAX_DOWNLOAD_ROUTINE = 4
+        def cancel_media_chunk(self, chunk: 'TgFileSystemClient.MediaChunkHolder') -> None:
+            cache_chat = self.chunk_cache.get(chunk.chat_id)
+            if cache_chat is None:
+                return
+            cache_msg = cache_chat.get(chunk.msg_id)
+            if cache_msg is None:
+                return
+            dummy = self.chunk_lru.pop(chunk.chunk_id, None)
+            if dummy is None:
+                return
+            self._remove_pop_chunk(dummy[1])
+
+    MAX_WORKER_ROUTINE = 4
     SINGLE_NET_CHUNK_SIZE = 256 * 1024  # 256kb
     SINGLE_MEDIA_SIZE = 5 * 1024 * 1024  # 5mb
     api_id: int
@@ -174,7 +194,7 @@ class TgFileSystemClient(object):
     task_id: int = 0
     me: Union[types.User, types.InputPeerUser]
 
-    def __init__(self, session_name: str, param: configParse.TgToFileSystemParameter) -> None:
+    def __init__(self, session_name: str, param: configParse.TgToFileSystemParameter, db: UserManager) -> None:
         self.api_id = param.tgApi.api_id
         self.api_hash = param.tgApi.api_hash
         self.session_name = session_name
@@ -185,8 +205,9 @@ class TgFileSystemClient(object):
         } if param.proxy.enable else {}
         self.task_queue = asyncio.Queue()
         self.client = TelegramClient(
-            self.session_name, self.api_id, self.api_hash, proxy=self.proxy_param)
+            f"{os.path.dirname(__file__)}/db/{self.session_name}.session", self.api_id, self.api_hash, proxy=self.proxy_param)
         self.media_chunk_manager = TgFileSystemClient.MediaChunkHolderManager()
+        self.db = db
 
     def __del__(self) -> None:
         if self.client.loop.is_running():
@@ -226,6 +247,13 @@ class TgFileSystemClient(object):
     def is_valid(self) -> bool:
         return self.client.is_connected() and self.me is not None
 
+    @_call_before_check
+    def _register_update_event(self) -> None:
+        @self.client.on(events.NewMessage(incoming=True, from_users=[666462447]))
+        async def _incoming_new_message_handler(event) -> None:
+            msg: types.Message = event.message
+            print(f"message: {msg.to_json()}")
+
     async def start(self) -> None:
         if self.is_valid():
             return
@@ -235,10 +263,11 @@ class TgFileSystemClient(object):
         if self.me is None:
             raise RuntimeError(
                 f"The {self.session_name} Client Does Not Login")
-        for _ in range(self.MAX_DOWNLOAD_ROUTINE):
-            download_rt = self.client.loop.create_task(
-                self._download_routine_handler())
-            self.download_routines.append(download_rt)
+        for _ in range(self.MAX_WORKER_ROUTINE):
+            worker_routine = self.client.loop.create_task(
+                self._worker_routine_handler())
+            self.download_routines.append(worker_routine)
+        self._register_update_event()
 
     async def stop(self) -> None:
         await self.client.loop.create_task(self._cancel_tasks())
@@ -266,12 +295,11 @@ class TgFileSystemClient(object):
         self.dialogs_cache = await self.client.get_dialogs()
         return self.dialogs_cache[offset:offset+limit]
 
-    async def _download_routine_handler(self) -> None:
+    async def _worker_routine_handler(self) -> None:
         while self.client.is_connected():
             task = await self.task_queue.get()
             await task[1]
             self.task_queue.task_done()
-        print("task quit!!!!")
 
     async def _get_offset_msg_id(self, chat_id: int, offset: int) -> int:
         if offset != 0:
@@ -322,6 +350,8 @@ class TgFileSystemClient(object):
                         chunk[:len(chunk)+remain_size])
                     break
                 media_holder.append_chunk_mem(chunk)
+        except asyncio.CancelledError as err:
+            self.media_chunk_manager.cancel_media_chunk(media_holder)
         except Exception as err:
             print(
                 f"_download_media_chunk err:{err=},{offset=},{target_size=},{media_holder}")
@@ -352,18 +382,6 @@ class TgFileSystemClient(object):
                         msg.chat_id, msg.id, align_pos, align_size)
                     self.media_chunk_manager.set_media_chunk(holder)
                     await self.task_queue.put((cur_task_id, self._download_media_chunk(msg, holder)))
-                    # while self.task_queue.qsize() < self.MAX_DOWNLOAD_ROUTINE and align_pos <= end:
-                    #     align_pos = align_pos + align_size
-                    #     align_size = min(self.SINGLE_MEDIA_SIZE,
-                    #                      file_size - align_pos)
-                    #     cache_chunk = self.media_chunk_manager.get_media_chunk(
-                    #         msg, align_pos, lru=False)
-                    #     if cache_chunk is not None:
-                    #         break
-                    #     holder = TgFileSystemClient.MediaChunkHolder(
-                    #         msg.chat_id, msg.id, align_pos, align_size)
-                    #     self.media_chunk_manager.set_media_chunk(holder)
-                    #     await self.task_queue.put((cur_task_id, self._download_media_chunk(msg, holder)))
                 elif not cache_chunk.is_completed():
                     # yield return completed part
                     # await untill completed or pos > end

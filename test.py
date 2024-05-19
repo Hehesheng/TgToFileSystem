@@ -1,7 +1,11 @@
 import time
 import asyncio
+import json
+import os
 
 from telethon import TelegramClient
+
+from backend.UserManager import UserManager
 
 import configParse
 
@@ -9,12 +13,12 @@ param = configParse.get_TgToFileSystemParameter()
 # Remember to use your own values from my.telegram.org!
 api_id = param.tgApi.api_id
 api_hash = param.tgApi.api_hash
-client1 = TelegramClient('anon', api_id, api_hash, proxy={
+client1 = TelegramClient(f'{os.getcwd()}/backend/db/anon.session', api_id, api_hash, proxy={
     # 'proxy_type': 'socks5',
     # 'addr': '172.25.32.1',
     # 'port': 7890,
 })
-client2 = TelegramClient('anon1', api_id, api_hash, proxy={
+client2 = TelegramClient(f'{os.getcwd()}/backend/db/anon1.session', api_id, api_hash, proxy={
     'proxy_type': 'socks5',
     'addr': '172.25.32.1',
     'port': 7890,
@@ -75,36 +79,45 @@ async def main(client):
 
     # You can print the message history of any chat:
     # message = await client.get_messages(nep_channel[0])
-    chat = await client.get_input_entity(-1001216816802)
-    async for message in client.iter_messages(chat, ids=98724):
-        print(message.id, message.text)
+    chat = await client.get_input_entity('me')
+    res = []
+    # db = UserManager()
+    # async for chat in client.iter_dialogs():
+    #     async for message in client.iter_messages(chat):
+    #         db.insert_by_message(me, message)
+    async for message in client.iter_messages(chat):
+    #     db.insert_by_message(me, message)
+        # print(message.id, message.text)
         # print(message.stringify())
-        # print(message.to_json())
+        msg_json_str = message.to_json()
+        print(msg_json_str)
+        # json.loads(msg_json_str)
+        # res.append(json.loads(msg_json)['media']['_'])
         # print(message.to_dict())
-        async def download_task(s: int):
-            last_p = 0
-            last_t = time.time()
-            def progress_callback(p, file_size):
-                nonlocal last_p, last_t
-                t = time.time()
-                bd = p-last_p
-                td = t-last_t
-                print(f"{s}:avg:{bd/td/1024:>10.2f}kbps,{p/1024/1024:>7.2f}/{file_size/1024/1024:>7.2f}/{p/file_size:>5.2%}")
-                last_p = p
-                last_t = time.time()
-            await client.download_media(message, progress_callback=progress_callback )
-        t_list = []
+        # async def download_task(s: int):
+        #     last_p = 0
+        #     last_t = time.time()
+        #     def progress_callback(p, file_size):
+        #         nonlocal last_p, last_t
+        #         t = time.time()
+        #         bd = p-last_p
+        #         td = t-last_t
+        #         print(f"{s}:avg:{bd/td/1024:>10.2f}kbps,{p/1024/1024:>7.2f}/{file_size/1024/1024:>7.2f}/{p/file_size:>5.2%}")
+        #         last_p = p
+        #         last_t = time.time()
+        #     await client.download_media(message, progress_callback=progress_callback )
+        # t_list = []
         # for i in range(4):
         #     ti = client.loop.create_task(download_task(i))
         #     t_list.append(ti)
-        await asyncio.gather(*t_list)
+        # await asyncio.gather(*t_list)
 
         # You can download media from messages, too!
         # The method will return the path where the file was saved.
         # if message.photo:
         #     path = await message.download_media()
         #     print('File saved to', path)  # printed after download is done
-
+    # print(res)
 # with client:
 #     client.loop.run_until_complete(main())
 try:
