@@ -3,7 +3,7 @@ import asyncio
 import json
 import os
 
-from telethon import TelegramClient
+from telethon import TelegramClient, utils, types
 
 from backend.UserManager import UserManager
 
@@ -13,28 +13,28 @@ param = configParse.get_TgToFileSystemParameter()
 # Remember to use your own values from my.telegram.org!
 api_id = param.tgApi.api_id
 api_hash = param.tgApi.api_hash
-client1 = TelegramClient(f'{os.getcwd()}/backend/db/anon.session', api_id, api_hash, proxy={
+client1 = TelegramClient(f'{os.getcwd()}/backend/db/test.session', api_id, api_hash, proxy={
     # 'proxy_type': 'socks5',
     # 'addr': '172.25.32.1',
     # 'port': 7890,
 })
-client2 = TelegramClient(f'{os.getcwd()}/backend/db/anon1.session', api_id, api_hash, proxy={
-    'proxy_type': 'socks5',
-    'addr': '172.25.32.1',
-    'port': 7890,
-})
+# client2 = TelegramClient(f'{os.getcwd()}/backend/db/anon1.session', api_id, api_hash, proxy={
+#     'proxy_type': 'socks5',
+#     'addr': '172.25.32.1',
+#     'port': 7890,
+# })
 # client.session.set_dc(2, "91.108.56.198", 443)
 # client = TelegramClient('anon', api_id, api_hash, proxy=("socks5", '127.0.0.1', 7890))
 # proxy=("socks5", '127.0.0.1', 4444)
 
 
-async def main(client):
+async def main(client: TelegramClient):
     # Getting information about yourself
     me = await client.get_me()
 
     # "me" is a user object. You can pretty-print
     # any Telegram object with the "stringify" method:
-    print(me.stringify())
+    # print(me.stringify())
 
     # When you print something, you see a representation of it.
     # You can access all attributes of Telegram objects with
@@ -43,9 +43,27 @@ async def main(client):
     print(username)
     print(me.phone)
 
+    # client.get_entity
+    i = 0
+    async for msg in client.iter_messages('pitaogo'):
+        print(f'{msg.id=} ,{msg.message=}, {msg.media=}')
+        i += 1
+        if i >= 10:
+            break
     # You can print all the dialogs/conversations that you are part of:
-    # async for dialog in client.iter_dialogs():
-    #     print(dialog.name, 'has ID', dialog.id)
+    peer_type_list = []
+    async for dialog in client.iter_dialogs():
+        real_id, peer_type = utils.resolve_id(dialog.id)
+        if peer_type in peer_type_list:
+            continue
+        peer_type_list.append(peer_type)
+        print(f'{dialog.name} has ID {dialog.id} real_id {real_id} type {peer_type}')
+        i = 0
+        async for msg in client.iter_messages(real_id):
+            print(f'{msg.id=}, {msg.message=}, {msg.media=}')
+            i += 1
+            if i >= 10:
+                break
     #     test_res = await client.get_input_entity(dialog.id)
     #     print(test_res)
     # await client.send_message(-1001150067822, "test message from python")
@@ -61,7 +79,7 @@ async def main(client):
     # await client.send_message('username', 'Testing Telethon!')
 
     # You can, of course, use markdown in your messages:
-    # message = await client.send_message(
+    # message: types.Message = await client.send_message(
     #     'me',
     #     'This message has **bold**, `code`, __italics__ and '
     #     'a [nice website](https://example.com)!',
@@ -79,18 +97,18 @@ async def main(client):
 
     # You can print the message history of any chat:
     # message = await client.get_messages(nep_channel[0])
-    chat = await client.get_input_entity('me')
-    res = []
+    # chat = await client.get_input_entity('me')
+    # res = []
     # db = UserManager()
     # async for chat in client.iter_dialogs():
     #     async for message in client.iter_messages(chat):
     #         db.insert_by_message(me, message)
-    async for message in client.iter_messages(chat):
+    # async for message in client.iter_messages(chat):
     #     db.insert_by_message(me, message)
         # print(message.id, message.text)
         # print(message.stringify())
-        msg_json_str = message.to_json()
-        print(msg_json_str)
+        # msg_json_str = message.to_json()
+        # print(msg_json_str)
         # json.loads(msg_json_str)
         # res.append(json.loads(msg_json)['media']['_'])
         # print(message.to_dict())
