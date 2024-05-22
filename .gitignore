@@ -3,6 +3,7 @@ __pycache__
 .vscode
 *.session
 *.session-journal
+*.session.sql
 *.toml
 *.db
 *.service

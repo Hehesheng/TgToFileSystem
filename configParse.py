@@ -15,6 +15,7 @@ class TgToFileSystemParameter(BaseModel):
     class ClientConfigPatameter(BaseModel):
         token: str = ""
         interval: float = 0.1
+        whitelist_chat: list[int] = []
     clients: list[ClientConfigPatameter]
 
     class ApiParameter(BaseModel):

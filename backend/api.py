@@ -50,6 +50,28 @@ class TgToFileListRequestBody(BaseModel):
     refresh: bool = False
     inner: bool = False
 
+@app.post("/tg/api/v1/file/search")
+@apiutils.atimeit
+async def search_tg_file_list(body: TgToFileListRequestBody):
+    try:
+        res = hints.TotalList()
+        res_type = "msg"
+        client = await clients_mgr.get_client_force(body.token)
+        res_dict = {}
+        res = await client.get_messages_by_search_db(body.chat_id, body.search, limit=body.length, offset=body.index)
+        res_dict = [json.loads(item) for item in res]
+
+        response_dict = {
+            "client": json.loads(client.to_json()),
+            "type": res_type,
+            "length": len(res_dict),
+            "list": res_dict,
+        }
+        return Response(json.dumps(response_dict), status_code=status.HTTP_200_OK)
+    except Exception as err:
+        print(f"{err=}")
+        return Response(json.dumps({"detail": f"{err=}"}), status_code=status.HTTP_404_NOT_FOUND)
+
 
 @app.post("/tg/api/v1/file/list")
 @apiutils.atimeit
@@ -132,6 +154,17 @@ async def get_tg_file_media_stream(token: str, cid: int, mid: int, request: Requ
         print(f"{err=}")
         return Response(json.dumps({"detail": f"{err=}"}), status_code=status.HTTP_404_NOT_FOUND)
 
+
+@app.get("/tg/api/v1/file/msg/{file_name}")
+@apiutils.atimeit
+async def get_tg_file_media_stream2(file_name: str, sign: str, req: Request):
+    raise NotImplementedError
+
+
+@app.get("/tg/api/v1/file/msg_convert")
+@apiutils.atimeit
+async def convert_tg_msg_link_media_stream(link: str, token: str):
+    raise NotImplementedError
 
 if __name__ == "__main__":
     param = configParse.get_TgToFileSystemParameter()

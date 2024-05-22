@@ -188,11 +188,13 @@ class TgFileSystemClient(object):
     media_chunk_manager: MediaChunkHolderManager
     dialogs_cache: Optional[hints.TotalList] = None
     msg_cache: list[types.Message] = []
-    download_routines: list[asyncio.Task] = []
+    worker_routines: list[asyncio.Task] = []
     # task should: (task_id, callabledFunc)
     task_queue: asyncio.Queue
     task_id: int = 0
     me: Union[types.User, types.InputPeerUser]
+    # client config
+    client_param: configParse.TgToFileSystemParameter.ClientConfigPatameter
 
     def __init__(self, session_name: str, param: configParse.TgToFileSystemParameter, db: UserManager) -> None:
         self.api_id = param.tgApi.api_id
@@ -203,6 +205,7 @@ class TgFileSystemClient(object):
             'addr': param.proxy.addr,
             'port': param.proxy.port,
         } if param.proxy.enable else {}
+        self.client_param = next((client_param for client_param in param.clients if client_param.token == session_name), configParse.TgToFileSystemParameter.ClientConfigPatameter())
         self.task_queue = asyncio.Queue()
         self.client = TelegramClient(
             f"{os.path.dirname(__file__)}/db/{self.session_name}.session", self.api_id, self.api_hash, proxy=self.proxy_param)
@@ -248,11 +251,11 @@ class TgFileSystemClient(object):
         return self.client.is_connected() and self.me is not None
 
     @_call_before_check
-    def _register_update_event(self) -> None:
-        @self.client.on(events.NewMessage(incoming=True, from_users=[666462447]))
+    def _register_update_event(self, from_users: list[int] = []) -> None:
+        @self.client.on(events.NewMessage(incoming=True, from_users=from_users))
         async def _incoming_new_message_handler(event) -> None:
             msg: types.Message = event.message
-            print(f"message: {msg.to_json()}")
+            self.db.insert_by_message(self.me, msg)
 
     async def start(self) -> None:
         if self.is_valid():
@@ -266,8 +269,10 @@ class TgFileSystemClient(object):
         for _ in range(self.MAX_WORKER_ROUTINE):
             worker_routine = self.client.loop.create_task(
                 self._worker_routine_handler())
-            self.download_routines.append(worker_routine)
-        self._register_update_event()
+            self.worker_routines.append(worker_routine)
+        if len(self.client_param.whitelist_chat) > 0:
+            self._register_update_event(from_users=self.client_param.whitelist_chat)
+            await self.task_queue.put((self._get_unique_task_id(), self._cache_whitelist_chat()))
 
     async def stop(self) -> None:
         await self.client.loop.create_task(self._cancel_tasks())
@@ -277,11 +282,33 @@ class TgFileSystemClient(object):
         await self.client.disconnect()
 
     async def _cancel_tasks(self) -> None:
-        for t in self.download_routines:
+        for t in self.worker_routines:
             try:
                 t.cancel()
             except Exception as err:
                 print(f"{err=}")
+
+    async def _cache_whitelist_chat(self):
+        for chat_id in self.client_param.whitelist_chat:
+            # update newest msg
+            newest_msg = self.db.get_newest_msg_by_chat_id(chat_id)
+            if len(newest_msg) > 0:
+                newest_msg = newest_msg[0]
+                async for msg in self.client.iter_messages(chat_id):
+                    if msg.id <= self.db.get_column_msg_id(newest_msg):
+                        break
+                    self.db.insert_by_message(self.me, msg)
+            # update oldest msg
+            oldest_msg = self.db.get_oldest_msg_by_chat_id(chat_id)
+            if len(oldest_msg) > 0:
+                oldest_msg = oldest_msg[0]
+                offset = self.db.get_column_msg_id(oldest_msg)
+                async for msg in self.client.iter_messages(chat_id, offset_id=offset):
+                    self.db.insert_by_message(self.me, msg)
+            else:
+                async for msg in self.client.iter_messages(chat_id):
+                    self.db.insert_by_message(self.me, msg)
+            
 
     @_acall_before_check
     async def get_message(self, chat_id: int, msg_id: int) -> types.Message:
@@ -297,9 +324,17 @@ class TgFileSystemClient(object):
 
     async def _worker_routine_handler(self) -> None:
         while self.client.is_connected():
-            task = await self.task_queue.get()
-            await task[1]
-            self.task_queue.task_done()
+            try:
+                task = await self.task_queue.get()
+                await task[1]
+            except Exception as err:
+                print(f"{err=}")
+            finally:
+                self.task_queue.task_done()
+            
+    def _get_unique_task_id(self) -> int:
+        self.task_id += 1
+        return self.task_id
 
     async def _get_offset_msg_id(self, chat_id: int, offset: int) -> int:
         if offset != 0:
@@ -317,7 +352,7 @@ class TgFileSystemClient(object):
         return res_list
 
     @_acall_before_check
-    async def get_messages_by_search(self, chat_id: int, search_word: str, limit: int = 10, offset: int = 0, inner_search: bool = False) -> hints.TotalList:
+    async def get_messages_by_search(self, chat_id: int, search_word: str, limit: int = 10, offset: int = 0, inner_search: bool = False, ignore_case: bool = False) -> hints.TotalList:
         offset = await self._get_offset_msg_id(chat_id, offset)
         if inner_search:
             res_list = await self.client.get_messages(chat_id, limit=limit, offset_id=offset, search=search_word)
@@ -326,7 +361,7 @@ class TgFileSystemClient(object):
         res_list = hints.TotalList()
         cnt = 0
         async for msg in self.client.iter_messages(chat_id, offset_id=offset):
-            if cnt >= 10_000:
+            if cnt >= 1_000:
                 break
             cnt += 1
             if msg.text.find(search_word) == -1 and apiutils.get_message_media_name(msg).find(search_word) == -1:
@@ -335,6 +370,13 @@ class TgFileSystemClient(object):
             if len(res_list) >= limit:
                 break
         return res_list
+    
+    async def get_messages_by_search_db(self, chat_id: int, search_word: str, limit: int = 10, offset: int = 0, ignore_case: bool = False) -> list[any]:
+        if chat_id not in self.client_param.whitelist_chat:
+            return []
+        res = self.db.get_msg_by_chat_id_and_keyword(chat_id, search_word, limit=limit, offset=offset, ignore_case=ignore_case)
+        res = [self.db.get_column_msg_js(v) for v in res]
+        return res
 
     async def _download_media_chunk(self, msg: types.Message, media_holder: MediaChunkHolder) -> None:
         try:
@@ -364,8 +406,7 @@ class TgFileSystemClient(object):
         try:
             # print(
             #     f"new steaming request:{msg.chat_id=},{msg.id=},[{start}:{end}]")
-            self.task_id += 1
-            cur_task_id = self.task_id
+            cur_task_id = self._get_unique_task_id()
             pos = start
             while pos <= end:
                 cache_chunk = self.media_chunk_manager.get_media_chunk(

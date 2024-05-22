@@ -32,6 +32,7 @@ def get_message_media_name(msg: types.Message) -> str:
     for attr in msg.media.document.attributes:
         if isinstance(attr, types.DocumentAttributeFilename):
             return attr.file_name
+    return ""
 
 
 def timeit(func):

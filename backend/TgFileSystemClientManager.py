@@ -1,4 +1,5 @@
 from typing import Any
+import asyncio
 import time
 import hashlib
 import os
@@ -16,9 +17,22 @@ class TgFileSystemClientManager(object):
     def __init__(self, param: configParse.TgToFileSystemParameter) -> None:
         self.param = param
         self.db = UserManager()
+        self.loop = asyncio.get_running_loop()
+        if self.loop.is_running():
+            self.loop.create_task(self._start_clients())
+        else:
+            self.loop.run_until_complete(self._start_clients())
 
     def __del__(self) -> None:
-        pass
+        self.clients.clear()
+    
+    async def _start_clients(self) -> None:
+        # init cache clients
+        for client_config in self.param.clients:
+            client = self.create_client(client_id=client_config.token)
+            if not client.is_valid():
+                await client.start()
+            self._register_client(client)
 
     def check_client_session_exist(self, client_id: str) -> bool:
         session_db_file = f"{os.path.dirname(__file__)}/db/{client_id}.session"
@@ -34,11 +48,11 @@ class TgFileSystemClientManager(object):
         client = TgFileSystemClient(client_id, self.param, self.db)
         return client
 
-    def register_client(self, client: TgFileSystemClient) -> bool:
+    def _register_client(self, client: TgFileSystemClient) -> bool:
         self.clients[client.session_name] = client
         return True
 
-    def deregister_client(self, client_id: str) -> bool:
+    def _unregister_client(self, client_id: str) -> bool:
         self.clients.pop(client_id)
         return True
 
@@ -54,6 +68,6 @@ class TgFileSystemClientManager(object):
             client = self.create_client(client_id=client_id)
         if not client.is_valid():
             await client.start()
-            self.register_client(client)
+            self._register_client(client)
         return client
 

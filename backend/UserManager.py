@@ -1,4 +1,5 @@
 import os
+from enum import Enum, IntEnum, unique, auto
 import sqlite3
 
 from pydantic import BaseModel
@@ -42,27 +43,61 @@ class UserManager(object):
     def update_message(self) -> None:
         raise NotImplementedError
 
+    def get_all_msg_by_chat_id(self, chat_id: int) -> list[any]:
+        res = self.cur.execute(
+            "SELECT * FROM message WHERE chat_id == ? ORDER BY msg_id DESC", (chat_id,))
+        return res.fetchall()
+
+    def get_msg_by_chat_id_and_keyword(self, chat_id: int, keyword: str, limit: int = 10, offset: int = 0, ignore_case: bool = False) -> list[any]:
+        keyword_condition = "msg_ctx LIKE '%{key}%' OR file_name LIKE '%{key}%'"
+        if ignore_case:
+            keyword_condition = "LOWER(msg_ctx) LIKE LOWER('%{key}%') OR LOWER(file_name) LIKE LOWER('%{key}%')"
+        keyword_condition = keyword_condition.format(key=keyword)
+        execute_script = f"SELECT * FROM message WHERE chat_id == {chat_id} AND ({keyword_condition}) ORDER BY msg_id DESC LIMIT {limit} OFFSET {offset}"
+        res = self.cur.execute(execute_script)
+        return res
+
+    def get_oldest_msg_by_chat_id(self, chat_id: int) -> list[any]:
+        res = self.cur.execute(
+            "SELECT * FROM message WHERE chat_id == ? ORDER BY msg_id LIMIT 1", (chat_id,))
+        return res.fetchall()
+
+    def get_newest_msg_by_chat_id(self, chat_id: int) -> list[any]:
+        res = self.cur.execute(
+            "SELECT * FROM message WHERE chat_id == ? ORDER BY msg_id DESC LIMIT 1", (chat_id,))
+        return res.fetchall()
+
+    @unique
+    class MessageTypeEnum(Enum):
+        OTHERS = "others"
+        TEXT = "text"
+        PHOTO = "photo"
+        FILE = "file"
+
     def insert_by_message(self, me: types.User, msg: types.Message):
         user_id = me.id
         chat_id = msg.chat_id
         msg_id = msg.id
         unique_id = str(user_id) + str(chat_id) + str(msg_id)
-        msg_type = "others"
+        msg_type = UserManager.MessageTypeEnum.OTHERS.value
         mime_type = ""
         file_name = ""
         msg_ctx = msg.message
         msg_js = msg.to_json()
-        if msg.media is None:
-            msg_type = "text"
-        elif isinstance(msg.media, types.MessageMediaPhoto):
-            msg_type = "photo"
-        elif isinstance(msg.media, types.MessageMediaDocument):
-            msg_type = "file"
-            document = msg.media.document
-            mime_type = document.mime_type
-            for attr in document.attributes:
-                if isinstance(attr, types.DocumentAttributeFilename):
-                    file_name = attr.file_name
+        try:
+            if msg.media is None:
+                msg_type = UserManager.MessageTypeEnum.TEXT.value
+            elif isinstance(msg.media, types.MessageMediaPhoto):
+                msg_type = UserManager.MessageTypeEnum.PHOTO.value
+            elif isinstance(msg.media, types.MessageMediaDocument):
+                document = msg.media.document
+                mime_type = document.mime_type
+                for attr in document.attributes:
+                    if isinstance(attr, types.DocumentAttributeFilename):
+                        file_name = attr.file_name
+                msg_type = UserManager.MessageTypeEnum.FILE.value
+        except Exception as err:
+            print(f"{err=}")
         insert_data = (unique_id, user_id, chat_id, msg_id,
                        msg_type, msg_ctx, mime_type, file_name, msg_js)
         execute_script = "INSERT INTO message (unique_id, user_id, chat_id, msg_id, msg_type, msg_ctx, mime_type, file_name, msg_js) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
@@ -71,6 +106,34 @@ class UserManager(object):
             self.con.commit()
         except Exception as err:
             print(f"{err=}")
+
+    @unique
+    class ColumnEnum(IntEnum):
+        UNIQUE_ID = 0
+        USER_ID = auto()
+        CHAT_ID = auto()
+        MSG_ID = auto()
+        MSG_TYPE = auto()
+        MSG_CTX = auto()
+        MIME_TYPE = auto()
+        FILE_NAME = auto()
+        MSG_JS = auto()
+        COLUMN_LEN = auto()
+
+    def get_column_by_enum(self, column: tuple[any], index: ColumnEnum) -> any:
+        if len(column) == UserManager.ColumnEnum.COLUMN_LEN:
+            return column[index]
+        return None
+
+    def get_column_msg_id(self, column: tuple[any]) -> int | None:
+        if len(column) == UserManager.ColumnEnum.COLUMN_LEN:
+            return column[UserManager.ColumnEnum.MSG_ID]
+        return None
+
+    def get_column_msg_js(self, column: tuple[any]) -> str | None:
+        if len(column) == UserManager.ColumnEnum.COLUMN_LEN:
+            return column[UserManager.ColumnEnum.MSG_JS]
+        return None
 
     def get_user_info() -> None:
         raise NotImplementedError
@@ -94,5 +157,11 @@ if __name__ == "__main__":
         "UPDATE user SET (client_id, username, phone) = (123, 'hehe', 66666) WHERE client_id == 123")
     res = db.cur.execute("SELECT name FROM sqlite_master")
     print(res.fetchall())
-    res = db.cur.execute("SELECT msg_ctx FROM message WHERE true AND msg_ctx like '%Cyan%'")
+    res = db.cur.execute(
+        "SELECT msg_id, msg_ctx, file_name FROM message WHERE chat_id == -1001216816802")
+    # res.execute("SELECT * FROM message WHERE chat_id == ? ORDER BY msg_id DESC LIMIT 1", (-1001216816802,))
+    # print(res.fetchall())
+    # print("\n\n\n\n\n\n")
+    res.execute("SELECT COUNT(msg_id) FROM message")
+    # res = db.cur.execute("SELECT DISTINCT chat_id FROM message")
     print(res.fetchall())
