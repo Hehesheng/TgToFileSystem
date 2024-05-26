@@ -10,7 +10,7 @@ from backend import backendapp
 if __name__ == "__main__":
     param = configParse.get_TgToFileSystemParameter()
     async def run_web_server():
-        cmd = f"streamlit run {os.getcwd()}/frontend/home.py --server.port 2000"
+        cmd = f"streamlit run {os.getcwd()}/frontend/home.py --server.port {param.web.port}"
         proc = await asyncio.create_subprocess_shell(cmd, stdout=asyncio.subprocess.PIPE,
                                               stderr=asyncio.subprocess.PIPE)
         stdout, stderr = await proc.communicate()

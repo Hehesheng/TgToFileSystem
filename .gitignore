@@ -7,3 +7,6 @@ __pycache__
 *.toml
 *.db
 *.service
+log
+cacheTest
+tmp

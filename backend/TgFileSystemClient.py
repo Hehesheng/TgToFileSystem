@@ -12,6 +12,7 @@ from collections import OrderedDict
 from typing import Union, Optional
 
 from telethon import TelegramClient, types, hints, events
+from fastapi import Request
 
 import configParse
 from backend import apiutils
@@ -22,7 +23,9 @@ class TgFileSystemClient(object):
     @functools.total_ordering
     class MediaChunkHolder(object):
         waiters: collections.deque[asyncio.Future]
+        requester: list[Request] = []
         chunk_id: int = 0
+        is_done: bool = False
 
         def __init__(self, chat_id: int, msg_id: int, start: int, target_len: int, mem: Optional[bytes] = None) -> None:
             self.chat_id = chat_id
@@ -62,6 +65,17 @@ class TgFileSystemClient(object):
         def is_completed(self) -> bool:
             return self.length >= self.target_len
 
+        def set_done(self) -> None:
+            # self.is_done = True
+            # self.notify_waiters()
+            self.requester.clear()
+            
+        def notify_waiters(self) -> None:
+            while self.waiters:
+                waiter = self.waiters.popleft()
+                if not waiter.done():
+                    waiter.set_result(None)
+
         def _set_chunk_mem(self, mem: Optional[bytes]) -> None:
             self.mem = mem
             self.length = len(self.mem)
@@ -75,12 +89,23 @@ class TgFileSystemClient(object):
             if self.length > self.target_len:
                 raise RuntimeWarning(
                     f"MeidaChunk Overflow:start:{self.start},len:{self.length},tlen:{self.target_len}")
-            while self.waiters:
-                waiter = self.waiters.popleft()
-                if not waiter.done():
-                    waiter.set_result(None)
+            self.notify_waiters()
 
-        async def wait_chunk_update(self):
+        def add_chunk_requester(self, req: Request) -> None:
+            self.requester.append(req)
+
+        async def is_disconneted(self) -> bool:
+            while self.requester:
+                res = await self.requester[0].is_disconnected()
+                if res:
+                    self.requester.pop(0)
+                    continue
+                return res
+            return True
+
+        async def wait_chunk_update(self) -> None:
+            if self.is_done:
+                return
             waiter = asyncio.Future()
             self.waiters.append(waiter)
             try:
@@ -175,7 +200,7 @@ class TgFileSystemClient(object):
             dummy = self.chunk_lru.pop(chunk.chunk_id, None)
             if dummy is None:
                 return
-            self._remove_pop_chunk(dummy[1])
+            self._remove_pop_chunk(dummy)
 
     MAX_WORKER_ROUTINE = 4
     SINGLE_NET_CHUNK_SIZE = 256 * 1024  # 256kb
@@ -272,7 +297,8 @@ class TgFileSystemClient(object):
             self.worker_routines.append(worker_routine)
         if len(self.client_param.whitelist_chat) > 0:
             self._register_update_event(from_users=self.client_param.whitelist_chat)
-            await self.task_queue.put((self._get_unique_task_id(), self._cache_whitelist_chat()))
+            # await self.task_queue.put((self._get_unique_task_id(), self._cache_whitelist_chat()))
+            await self.task_queue.put((self._get_unique_task_id(), self._cache_whitelist_chat2()))
 
     async def stop(self) -> None:
         await self.client.loop.create_task(self._cancel_tasks())
@@ -287,6 +313,13 @@ class TgFileSystemClient(object):
                 t.cancel()
             except Exception as err:
                 print(f"{err=}")
+
+    async def _cache_whitelist_chat2(self):
+        for chat_id in self.client_param.whitelist_chat:
+            async for msg in self.client.iter_messages(chat_id):
+                if len(self.db.get_msg_by_unique_id(self.db.generate_unique_id_by_msg(self.me, msg))) != 0:
+                    continue
+                self.db.insert_by_message(self.me, msg)
 
     async def _cache_whitelist_chat(self):
         for chat_id in self.client_param.whitelist_chat:
@@ -371,15 +404,16 @@ class TgFileSystemClient(object):
                 break
         return res_list
     
-    async def get_messages_by_search_db(self, chat_id: int, search_word: str, limit: int = 10, offset: int = 0, ignore_case: bool = False) -> list[any]:
+    async def get_messages_by_search_db(self, chat_id: int, search_word: str, limit: int = 10, offset: int = 0, inc: bool = False, ignore_case: bool = False) -> list[any]:
         if chat_id not in self.client_param.whitelist_chat:
             return []
-        res = self.db.get_msg_by_chat_id_and_keyword(chat_id, search_word, limit=limit, offset=offset, ignore_case=ignore_case)
+        res = self.db.get_msg_by_chat_id_and_keyword(chat_id, search_word, limit=limit, offset=offset, inc=inc, ignore_case=ignore_case)
         res = [self.db.get_column_msg_js(v) for v in res]
         return res
 
     async def _download_media_chunk(self, msg: types.Message, media_holder: MediaChunkHolder) -> None:
         try:
+            flag = False
             offset = media_holder.start + media_holder.length
             target_size = media_holder.target_len - media_holder.length
             remain_size = target_size
@@ -392,23 +426,28 @@ class TgFileSystemClient(object):
                         chunk[:len(chunk)+remain_size])
                     break
                 media_holder.append_chunk_mem(chunk)
+                if await media_holder.is_disconneted() and not flag:
+                    flag = True
+                    # print(f"cancel trigger, requester len: {len(media_holder.requester)}, {media_holder=}")
+                    # raise asyncio.CancelledError(f"disconneted,cancel:{media_holder=}")
         except asyncio.CancelledError as err:
+            # print(f"cancel holder:{media_holder}")
             self.media_chunk_manager.cancel_media_chunk(media_holder)
         except Exception as err:
             print(
-                f"_download_media_chunk err:{err=},{offset=},{target_size=},{media_holder}")
+                f"_download_media_chunk err:{err=},{offset=},{target_size=},{media_holder},\r\n{traceback.format_exc()}")
         finally:
-            pass
+            media_holder.set_done()
             # print(
             #     f"downloaded chunk:{time.time()}.{offset=},{target_size=},{media_holder}")
 
-    async def streaming_get_iter(self, msg: types.Message, start: int, end: int):
+    async def streaming_get_iter(self, msg: types.Message, start: int, end: int, req: Request):
         try:
             # print(
             #     f"new steaming request:{msg.chat_id=},{msg.id=},[{start}:{end}]")
             cur_task_id = self._get_unique_task_id()
             pos = start
-            while pos <= end:
+            while not await req.is_disconnected() and pos <= end:
                 cache_chunk = self.media_chunk_manager.get_media_chunk(
                     msg, pos)
                 if cache_chunk is None:
@@ -421,12 +460,16 @@ class TgFileSystemClient(object):
                                      file_size - align_pos)
                     holder = TgFileSystemClient.MediaChunkHolder(
                         msg.chat_id, msg.id, align_pos, align_size)
+                    holder.add_chunk_requester(req)
                     self.media_chunk_manager.set_media_chunk(holder)
                     await self.task_queue.put((cur_task_id, self._download_media_chunk(msg, holder)))
                 elif not cache_chunk.is_completed():
                     # yield return completed part
                     # await untill completed or pos > end
+                    cache_chunk.add_chunk_requester(req)
                     while pos < cache_chunk.start + cache_chunk.target_len and pos <= end:
+                        if await req.is_disconnected():
+                            break
                         offset = pos - cache_chunk.start
                         if offset >= cache_chunk.length:
                             await cache_chunk.wait_chunk_update()
@@ -458,7 +501,7 @@ class TgFileSystemClient(object):
                     if task[0] != task_id:
                         self.task_queue.put_nowait(task)
             await self.client.loop.create_task(_cancel_task_by_id(cur_task_id))
-            # print("yield quit")
+            # print(f"yield quit,{msg.chat_id=},{msg.id=},[{start}:{end}]")
 
     def __enter__(self):
         raise NotImplementedError

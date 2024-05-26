@@ -34,6 +34,19 @@ def get_message_media_name(msg: types.Message) -> str:
             return attr.file_name
     return ""
 
+def timeit_sec(func):
+    @wraps(func)
+    def timeit_wrapper(*args, **kwargs):
+        print(
+            f'Function called {func.__name__}{args} {kwargs}')
+        start_time = time.perf_counter()
+        result = func(*args, **kwargs)
+        end_time = time.perf_counter()
+        total_time = end_time - start_time
+        print(
+            f'Function quited {func.__name__}{args} {kwargs} Took {total_time:.4f} seconds')
+        return result
+    return timeit_wrapper
 
 def timeit(func):
     if configParse.get_TgToFileSystemParameter().base.timeit_enable:

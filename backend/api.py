@@ -49,6 +49,7 @@ class TgToFileListRequestBody(BaseModel):
     length: int = 10
     refresh: bool = False
     inner: bool = False
+    inc: bool = False
 
 @app.post("/tg/api/v1/file/search")
 @apiutils.atimeit
@@ -58,7 +59,7 @@ async def search_tg_file_list(body: TgToFileListRequestBody):
         res_type = "msg"
         client = await clients_mgr.get_client_force(body.token)
         res_dict = {}
-        res = await client.get_messages_by_search_db(body.chat_id, body.search, limit=body.length, offset=body.index)
+        res = await client.get_messages_by_search_db(body.chat_id, body.search, limit=body.length, inc=body.inc, offset=body.index)
         res_dict = [json.loads(item) for item in res]
 
         response_dict = {
@@ -146,7 +147,7 @@ async def get_tg_file_media_stream(token: str, cid: int, mid: int, request: Requ
             headers["content-range"] = f"bytes {start}-{end}/{file_size}"
             status_code = status.HTTP_206_PARTIAL_CONTENT
         return StreamingResponse(
-            client.streaming_get_iter(msg, start, end),
+            client.streaming_get_iter(msg, start, end, request),
             headers=headers,
             status_code=status_code,
         )
@@ -155,13 +156,13 @@ async def get_tg_file_media_stream(token: str, cid: int, mid: int, request: Requ
         return Response(json.dumps({"detail": f"{err=}"}), status_code=status.HTTP_404_NOT_FOUND)
 
 
-@app.get("/tg/api/v1/file/msg/{file_name}")
+@app.get("/tg/api/v1/file/get/{file_name}")
 @apiutils.atimeit
 async def get_tg_file_media_stream2(file_name: str, sign: str, req: Request):
     raise NotImplementedError
 
 
-@app.get("/tg/api/v1/file/msg_convert")
+@app.get("/tg/api/v1/file/link_convert")
 @apiutils.atimeit
 async def convert_tg_msg_link_media_stream(link: str, token: str):
     raise NotImplementedError
