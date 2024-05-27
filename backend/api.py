@@ -34,13 +34,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-@app.post("/tg/api/v1/file/login")
-@apiutils.atimeit
-async def login_new_tg_file_client():
-    raise NotImplementedError
-
-
 class TgToFileListRequestBody(BaseModel):
     token: str
     search: str = ""
@@ -156,16 +149,54 @@ async def get_tg_file_media_stream(token: str, cid: int, mid: int, request: Requ
         return Response(json.dumps({"detail": f"{err=}"}), status_code=status.HTTP_404_NOT_FOUND)
 
 
-@app.get("/tg/api/v1/file/get/{file_name}")
+@app.get("/tg/api/v1/file/get/{chat_id}/{msg_id}/{file_name}")
 @apiutils.atimeit
-async def get_tg_file_media_stream2(file_name: str, sign: str, req: Request):
+async def get_tg_file_media(chat_id: int|str, msg_id: int, file_name: str, sign: str, req: Request):
+    return await get_tg_file_media_stream(sign, chat_id, msg_id, req)
+
+
+@app.post("/tg/api/v1/client/login")
+@apiutils.atimeit
+async def login_new_tg_file_client():
     raise NotImplementedError
 
 
-@app.get("/tg/api/v1/file/link_convert")
+@app.get("/tg/api/v1/client/link_convert")
 @apiutils.atimeit
 async def convert_tg_msg_link_media_stream(link: str, token: str):
     raise NotImplementedError
+
+
+class TgToChatListRequestBody(BaseModel):
+    token: str
+    search: str = ""
+    index: int = 0
+    length: int = 0
+    refresh: bool = False
+
+@app.post("/tg/api/v1/client/chat")
+@apiutils.atimeit
+async def get_tg_client_chat_list(body: TgToChatListRequestBody, request: Request):
+    try:
+        res = hints.TotalList()
+        res_type = "chat"
+        client = await clients_mgr.get_client_force(body.token)
+        res_dict = {}
+
+        res = await client.get_dialogs(limit=body.length, offset=body.index, refresh=body.refresh)
+        res_dict = [{"id": item.id, "is_channel": item.is_channel,
+                        "is_group": item.is_group, "is_user": item.is_user, "name": item.name, } for item in res]
+
+        response_dict = {
+            "client": json.loads(client.to_json()),
+            "type": res_type,
+            "length": len(res_dict),
+            "list": res_dict,
+        }
+        return Response(json.dumps(response_dict), status_code=status.HTTP_200_OK)
+    except Exception as err:
+        print(f"{err=}")
+        return Response(json.dumps({"detail": f"{err=}"}), status_code=status.HTTP_404_NOT_FOUND)
 
 if __name__ == "__main__":
     param = configParse.get_TgToFileSystemParameter()

@@ -248,7 +248,7 @@ class TgFileSystemClient(object):
             return f"client disconnected, session_name:{self.session_name}"
         return f"client connected, session_name:{self.session_name}, username:{self.me.username}, phone:{self.me.phone}, detail:{self.me.stringify()}"
 
-    def _call_before_check(func):
+    def _check_before_call(func):
         def call_check_wrapper(self, *args, **kwargs):
             if not self.is_valid():
                 raise RuntimeError("Client does not run.")
@@ -256,7 +256,7 @@ class TgFileSystemClient(object):
             return result
         return call_check_wrapper
 
-    def _acall_before_check(func):
+    def _acheck_before_call(func):
         async def call_check_wrapper(self, *args, **kwargs):
             if not self.is_valid():
                 raise RuntimeError("Client does not run.")
@@ -264,18 +264,18 @@ class TgFileSystemClient(object):
             return result
         return call_check_wrapper
 
-    @_call_before_check
+    @_check_before_call
     def to_dict(self) -> dict:
         return self.me.to_dict()
 
-    @_call_before_check
+    @_check_before_call
     def to_json(self) -> str:
         return self.me.to_json()
 
     def is_valid(self) -> bool:
         return self.client.is_connected() and self.me is not None
 
-    @_call_before_check
+    @_check_before_call
     def _register_update_event(self, from_users: list[int] = []) -> None:
         @self.client.on(events.NewMessage(incoming=True, from_users=from_users))
         async def _incoming_new_message_handler(event) -> None:
@@ -343,12 +343,12 @@ class TgFileSystemClient(object):
                     self.db.insert_by_message(self.me, msg)
             
 
-    @_acall_before_check
+    @_acheck_before_call
     async def get_message(self, chat_id: int, msg_id: int) -> types.Message:
         msg = await self.client.get_messages(chat_id, ids=msg_id)
         return msg
 
-    @_acall_before_check
+    @_acheck_before_call
     async def get_dialogs(self, limit: int = 10, offset: int = 0, refresh: bool = False) -> hints.TotalList:
         if self.dialogs_cache is not None and refresh is False:
             return self.dialogs_cache[offset:offset+limit]
@@ -378,13 +378,13 @@ class TgFileSystemClient(object):
             offset = first_id + offset
         return offset
 
-    @_acall_before_check
+    @_acheck_before_call
     async def get_messages(self, chat_id: int, limit: int = 10, offset: int = 0) -> hints.TotalList:
         offset = await self._get_offset_msg_id(chat_id, offset)
         res_list = await self.client.get_messages(chat_id, limit=limit, offset_id=offset)
         return res_list
 
-    @_acall_before_check
+    @_acheck_before_call
     async def get_messages_by_search(self, chat_id: int, search_word: str, limit: int = 10, offset: int = 0, inner_search: bool = False, ignore_case: bool = False) -> hints.TotalList:
         offset = await self._get_offset_msg_id(chat_id, offset)
         if inner_search:

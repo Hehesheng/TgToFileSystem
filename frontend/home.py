@@ -106,9 +106,9 @@ def do_search_req():
         st.session_state.search_res_select_list[index] = container_columns[0].checkbox(
             url, label_visibility='collapsed')
 
-        expender_title = f"{(msg_ctx if len(msg_ctx) < 83 else msg_ctx[:80] + '...')} &mdash; *{file_size}*"
-        popover = container_columns[1].popover(expender_title)
-        popover_columns = popover.columns([1, 1])
+        expender_title = f"{(msg_ctx if len(msg_ctx) < 103 else msg_ctx[:100] + '...')} &mdash; *{file_size}*"
+        popover = container_columns[1].popover(expender_title, use_container_width=True)
+        popover_columns = popover.columns([1, 3])
         popover_columns[0].video(url)
         popover_columns[1].markdown(f'{msg_ctx}')
         popover_columns[1].markdown(f'**{file_name}**')
