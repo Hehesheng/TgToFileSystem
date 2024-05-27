@@ -1,11 +1,13 @@
 import os
 from enum import Enum, IntEnum, unique, auto
 import sqlite3
+import logging
 import datetime
 
 from pydantic import BaseModel
 from telethon import types
 
+logger = logging.getLogger(__file__.split("/")[-1])
 
 class UserUpdateParam(BaseModel):
     client_id: str
@@ -124,7 +126,7 @@ class UserManager(object):
                         file_name = attr.file_name
                 msg_type = UserManager.MessageTypeEnum.FILE.value
         except Exception as err:
-            print(f"{err=}")
+            logger.error(f"{err=}")
         insert_data = (unique_id, user_id, chat_id, msg_id,
                        msg_type, msg_ctx, mime_type, file_name, msg_js, date_time)
         execute_script = "INSERT INTO message (unique_id, user_id, chat_id, msg_id, msg_type, msg_ctx, mime_type, file_name, msg_js, date_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
@@ -132,7 +134,7 @@ class UserManager(object):
             self.cur.execute(execute_script, insert_data)
             self.con.commit()
         except Exception as err:
-            print(f"{err=}")
+            logger.error(f"{err=}")
 
     @unique
     class ColumnEnum(IntEnum):

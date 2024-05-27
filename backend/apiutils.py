@@ -1,4 +1,5 @@
 import time
+import logging
 
 from fastapi import status, HTTPException
 from telethon import types
@@ -6,6 +7,7 @@ from functools import wraps
 
 import configParse
 
+logger = logging.getLogger(__file__.split("/")[-1])
 
 def get_range_header(range_header: str, file_size: int) -> tuple[int, int]:
     def _invalid_range():
@@ -37,13 +39,13 @@ def get_message_media_name(msg: types.Message) -> str:
 def timeit_sec(func):
     @wraps(func)
     def timeit_wrapper(*args, **kwargs):
-        print(
+        logger.debug(
             f'Function called {func.__name__}{args} {kwargs}')
         start_time = time.perf_counter()
         result = func(*args, **kwargs)
         end_time = time.perf_counter()
         total_time = end_time - start_time
-        print(
+        logger.debug(
             f'Function quited {func.__name__}{args} {kwargs} Took {total_time:.4f} seconds')
         return result
     return timeit_wrapper
@@ -52,13 +54,13 @@ def timeit(func):
     if configParse.get_TgToFileSystemParameter().base.timeit_enable:
         @wraps(func)
         def timeit_wrapper(*args, **kwargs):
-            print(
+            logger.debug(
                 f'Function called {func.__name__}{args} {kwargs}')
             start_time = time.perf_counter()
             result = func(*args, **kwargs)
             end_time = time.perf_counter()
             total_time = end_time - start_time
-            print(
+            logger.debug(
                 f'Function quited {func.__name__}{args} {kwargs} Took {total_time:.4f} seconds')
             return result
         return timeit_wrapper
@@ -69,13 +71,13 @@ def atimeit(func):
     if configParse.get_TgToFileSystemParameter().base.timeit_enable:
         @wraps(func)
         async def timeit_wrapper(*args, **kwargs):
-            print(
+            logger.debug(
                 f'AFunction called {func.__name__}{args} {kwargs}')
             start_time = time.perf_counter()
             result = await func(*args, **kwargs)
             end_time = time.perf_counter()
             total_time = end_time - start_time
-            print(
+            logger.debug(
                 f'AFunction quited {func.__name__}{args} {kwargs} Took {total_time:.4f} seconds')
             return result
         return timeit_wrapper

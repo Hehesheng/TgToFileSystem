@@ -1,13 +1,135 @@
+import logging.handlers
 import time
 import asyncio
 import json
+import rsa
+import pickle
+import base64
+from datetime import datetime
+import logging
 import os
+import yaml
 
 from telethon import TelegramClient, utils, types
+import diskcache
 
 from backend.UserManager import UserManager
+from backend import apiutils
 
 import configParse
+
+with open('logging_config.yaml', 'r') as f:
+    logging.config.dictConfig(yaml.safe_load(f.read()))
+for handler in logging.getLogger().handlers:
+    if isinstance(handler, logging.handlers.TimedRotatingFileHandler):
+        handler.suffix = "%Y-%m-%d"
+logger = logging.getLogger(__file__.split("/")[-1])
+
+logger.debug('This is a debug message')
+logger.info('This is an info message')
+logger.warning('This is a warning message')
+logger.error('This is an error message')
+logger.critical('This is a critical message')
+
+exit(0)
+
+# class TestClass(object):
+#     int_value: int = 1
+#     float_value: float = 2.0
+#     bool_value: bool = True
+#     bytes_value: bytes = b'Man! What can i say!'
+
+# src_obj = TestClass()
+# with open('tmp', 'wb') as f:
+#     src_obj.int_value = 10000000000000
+#     import random
+#     src_obj.bytes_value = random.randbytes(5*1024*1024)
+#     pickle.dump(src_obj, f)
+# test_bytes = random.randbytes(5*1024*1024)
+
+
+# with open('tmp', 'rb') as f:
+#     test_bytes = f.read()
+
+# @apiutils.timeit_sec
+# def pickle_loads_test(loop) -> TestClass:
+#     obj_cls: TestClass|None = None
+#     for _ in range(loop):
+#         obj_cls = pickle.loads(obj_bytes)
+#     return obj_cls
+
+# @apiutils.timeit_sec
+# def pickle_dumps_test(loop) -> bytes:
+#     obj_bytes: bytes|None = None
+#     for _ in range(loop):
+#         obj_bytes = pickle.dumps(obj_cls)
+#     return obj_bytes
+
+# for i in range(10):
+#     print(f"loop:{i}")
+#     test_obj = pickle_loads_test(test_bytes, 1000)
+#     pickle_dumps_test(test_obj, 1000)
+
+# exit(0)
+
+# cache = diskcache.Cache("./cacheTest", size_limit=2**30, eviction_policy='least-recently-used')
+# random_key = random.randbytes(1000)
+# @apiutils.timeit_sec
+# def test_db_write_cache():
+#     for i in range(1000):
+#         cache.add(int(random_key[i]), test_bytes, expire=300)
+# @apiutils.timeit_sec
+# def test_db_read_cache():
+#     for i in range(1000):
+#         exist = cache.touch(int(random_key[i]), expire=300)
+#         if exist:
+#             cache.get(int(random_key[i]))
+# test_db_write_cache()
+# test_db_read_cache()
+
+# exit(0)
+
+# db = UserManager()
+# search_cur = db.con.cursor()
+# update_cur = db.con.cursor()
+# res = search_cur.execute("SELECT * FROM message")
+# cnt = 0
+# for row in res:
+#     (unique_id, date_time, msg_js) = (row[0], row[-1], row[-2])
+#     msg_dic = json.loads(msg_js)
+#     date_time_str = msg_dic['date']
+#     if date_time is not None or date_time_str is None:
+#         continue
+#     date = datetime.fromisoformat(date_time_str)
+#     ts = int(date.timestamp() * 1_000) * 1_000_000
+#     try:
+#         update_cur.execute(f"UPDATE message SET date_time = {ts} WHERE unique_id == '{unique_id}'")
+#     except Exception as err:
+#         print(f"{err=}")
+#     if cnt % 1000 == 0:
+#         db.con.commit()
+#         print(cnt)
+#     cnt += 1
+# db.con.commit()
+# print(cnt)
+# exit(0)
+
+# pubkey, prikey = rsa.newkeys(1024)
+# print(pubkey)
+# print(prikey)
+# print()
+# enc_bytes = rsa.encrypt("token=anonnnnnnn1435145nnnnnnn;cid=-1001216816802;mid=95056;t=2000000000000".encode('utf-8'), pubkey)
+# print(enc_bytes)
+# print(len(enc_bytes))
+# b64enc_str = base64.b64encode(enc_bytes)
+# print(b64enc_str.decode('utf-8'))
+# print(len(b64enc_str))
+# dec_bytes = base64.b64decode(b64enc_str)
+# # print(dec_bytes)s
+# origin_str = rsa.decrypt(dec_bytes, prikey)
+# print(origin_str)
+# print(len(origin_str.decode('utf-8')))
+# exit(0)
 
 param = configParse.get_TgToFileSystemParameter()
 # Remember to use your own values from my.telegram.org!
@@ -42,28 +164,32 @@ async def main(client: TelegramClient):
     username = me.username
     print(username)
     print(me.phone)
+    
+    msg = await client.get_messages(1216816802, ids=[99334])
+    # client.download_media(msg, )
+    # print(path)
 
     # client.get_entity
-    i = 0
-    async for msg in client.iter_messages('pitaogo'):
-        print(f'{msg.id=} ,{msg.message=}, {msg.media=}')
-        i += 1
-        if i >= 10:
-            break
+    # i = 0
+    # async for msg in client.iter_messages('pitaogo'):
+    #     print(f'{msg.id=} ,{msg.message=}, {msg.media=}')
+    #     i += 1
+    #     if i >= 10:
+    #         break
     # You can print all the dialogs/conversations that you are part of:
-    peer_type_list = []
-    async for dialog in client.iter_dialogs():
-        real_id, peer_type = utils.resolve_id(dialog.id)
-        if peer_type in peer_type_list:
-            continue
-        peer_type_list.append(peer_type)
-        print(f'{dialog.name} has ID {dialog.id} real_id {real_id} type {peer_type}')
-        i = 0
-        async for msg in client.iter_messages(real_id):
-            print(f'{msg.id=}, {msg.message=}, {msg.media=}')
-            i += 1
-            if i >= 10:
-                break
+    # peer_type_list = []
+    # async for dialog in client.iter_dialogs():
+    #     real_id, peer_type = utils.resolve_id(dialog.id)
+    #     if peer_type in peer_type_list:
+    #         continue
+    #     peer_type_list.append(peer_type)
+    #     print(f'{dialog.name} has ID {dialog.id} real_id {real_id} type {peer_type}')
+    #     i = 0
+    #     async for msg in client.iter_messages(real_id):
+    #         print(f'{msg.id=}, {msg.message=}, {msg.media=}')
+    #         i += 1
+    #         if i >= 10:
+    #             break
     #     test_res = await client.get_input_entity(dialog.id)
     #     print(test_res)
     # await client.send_message(-1001150067822, "test message from python")

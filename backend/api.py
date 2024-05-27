@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import logging
 
 import uvicorn
 from fastapi import FastAPI, status, Request
@@ -13,6 +14,8 @@ from pydantic import BaseModel
 import configParse
 from backend import apiutils
 from backend.TgFileSystemClientManager import TgFileSystemClientManager
+
+logger = logging.getLogger(__file__.split("/")[-1])
 
 clients_mgr: TgFileSystemClientManager = None
 
@@ -63,7 +66,7 @@ async def search_tg_file_list(body: TgToFileListRequestBody):
         }
         return Response(json.dumps(response_dict), status_code=status.HTTP_200_OK)
     except Exception as err:
-        print(f"{err=}")
+        logger.error(f"{err=}")
         return Response(json.dumps({"detail": f"{err=}"}), status_code=status.HTTP_404_NOT_FOUND)
 
 
@@ -96,7 +99,7 @@ async def get_tg_file_list(body: TgToFileListRequestBody):
         }
         return Response(json.dumps(response_dict), status_code=status.HTTP_200_OK)
     except Exception as err:
-        print(f"{err=}")
+        logger.error(f"{err=}")
         return Response(json.dumps({"detail": f"{err=}"}), status_code=status.HTTP_404_NOT_FOUND)
 
 
@@ -145,7 +148,7 @@ async def get_tg_file_media_stream(token: str, cid: int, mid: int, request: Requ
             status_code=status_code,
         )
     except Exception as err:
-        print(f"{err=}")
+        logger.error(f"{err=}")
         return Response(json.dumps({"detail": f"{err=}"}), status_code=status.HTTP_404_NOT_FOUND)
 
 
@@ -195,7 +198,7 @@ async def get_tg_client_chat_list(body: TgToChatListRequestBody, request: Reques
         }
         return Response(json.dumps(response_dict), status_code=status.HTTP_200_OK)
     except Exception as err:
-        print(f"{err=}")
+        logger.error(f"{err=}")
         return Response(json.dumps({"detail": f"{err=}"}), status_code=status.HTTP_404_NOT_FOUND)
 
 if __name__ == "__main__":

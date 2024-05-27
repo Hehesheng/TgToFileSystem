@@ -1,0 +1,24 @@
+version: 1
+disable_existing_loggers: false
+formatters:
+  standard:
+    format: '%(asctime)s [%(name)s][%(levelname)s]:%(message)s'
+handlers:
+  console:
+    level: INFO
+    class: logging.StreamHandler
+    formatter: standard
+  timed_rotating_file:
+    class: logging.handlers.TimedRotatingFileHandler
+    filename: logs/app.log
+    when: midnight
+    interval: 1
+    backupCount: 7
+    level: INFO
+    formatter: standard
+    encoding: utf-8
+loggers:
+  '':
+    handlers: [console, timed_rotating_file]
+    level: DEBUG
+    propagate: true

@@ -8,6 +8,7 @@ import os
 import functools
 import collections
 import traceback
+import logging
 from collections import OrderedDict
 from typing import Union, Optional
 
@@ -18,6 +19,7 @@ import configParse
 from backend import apiutils
 from backend.UserManager import UserManager
 
+logger = logging.getLogger(__file__.split("/")[-1])
 
 class TgFileSystemClient(object):
     @functools.total_ordering
@@ -312,7 +314,7 @@ class TgFileSystemClient(object):
             try:
                 t.cancel()
             except Exception as err:
-                print(f"{err=}")
+                logger.error(f"{err=}")
 
     async def _cache_whitelist_chat2(self):
         for chat_id in self.client_param.whitelist_chat:
@@ -361,7 +363,7 @@ class TgFileSystemClient(object):
                 task = await self.task_queue.get()
                 await task[1]
             except Exception as err:
-                print(f"{err=}")
+                logger.error(f"{err=}")
             finally:
                 self.task_queue.task_done()
             
@@ -413,7 +415,6 @@ class TgFileSystemClient(object):
 
     async def _download_media_chunk(self, msg: types.Message, media_holder: MediaChunkHolder) -> None:
         try:
-            flag = False
             offset = media_holder.start + media_holder.length
             target_size = media_holder.target_len - media_holder.length
             remain_size = target_size
@@ -426,25 +427,21 @@ class TgFileSystemClient(object):
                         chunk[:len(chunk)+remain_size])
                     break
                 media_holder.append_chunk_mem(chunk)
-                if await media_holder.is_disconneted() and not flag:
-                    flag = True
-                    # print(f"cancel trigger, requester len: {len(media_holder.requester)}, {media_holder=}")
-                    # raise asyncio.CancelledError(f"disconneted,cancel:{media_holder=}")
         except asyncio.CancelledError as err:
-            # print(f"cancel holder:{media_holder}")
+            logger.warning(f"cancel holder:{media_holder}")
             self.media_chunk_manager.cancel_media_chunk(media_holder)
         except Exception as err:
-            print(
+            logger.error(
                 f"_download_media_chunk err:{err=},{offset=},{target_size=},{media_holder},\r\n{traceback.format_exc()}")
         finally:
             media_holder.set_done()
-            # print(
-            #     f"downloaded chunk:{time.time()}.{offset=},{target_size=},{media_holder}")
+            logger.debug(
+                f"downloaded chunk:{time.time()}.{offset=},{target_size=},{media_holder}")
 
     async def streaming_get_iter(self, msg: types.Message, start: int, end: int, req: Request):
         try:
-            # print(
-            #     f"new steaming request:{msg.chat_id=},{msg.id=},[{start}:{end}]")
+            logger.debug(
+                f"new steaming request:{msg.chat_id=},{msg.id=},[{start}:{end}]")
             cur_task_id = self._get_unique_task_id()
             pos = start
             while not await req.is_disconnected() and pos <= end:
@@ -476,8 +473,6 @@ class TgFileSystemClient(object):
                             continue
                         need_len = min(cache_chunk.length -
                                        offset, end - pos + 1)
-                        # print(
-                        #     f"return missed {need_len} bytes:[{pos}:{pos+need_len}].{cache_chunk=}")
                         pos = pos + need_len
                         yield cache_chunk.mem[offset:offset+need_len]
                 else:
@@ -486,13 +481,11 @@ class TgFileSystemClient(object):
                         raise RuntimeError(
                             f"lru cache missed!{pos=},{cache_chunk=}")
                     need_len = min(cache_chunk.length - offset, end - pos + 1)
-                    # print(
-                    #     f"return hited {need_len} bytes:[{pos}:{pos+need_len}].{cache_chunk=}")
                     pos = pos + need_len
                     yield cache_chunk.mem[offset:offset+need_len]
         except Exception as err:
             traceback.print_exc()
-            print(f"stream iter:{err=}")
+            logger.error(f"stream iter:{err=}")
         finally:
             async def _cancel_task_by_id(task_id: int):
                 for _ in range(self.task_queue.qsize()):
@@ -501,7 +494,7 @@ class TgFileSystemClient(object):
                     if task[0] != task_id:
                         self.task_queue.put_nowait(task)
             await self.client.loop.create_task(_cancel_task_by_id(cur_task_id))
-            # print(f"yield quit,{msg.chat_id=},{msg.id=},[{start}:{end}]")
+            logger.debug(f"yield quit,{msg.chat_id=},{msg.id=},[{start}:{end}]")
 
     def __enter__(self):
         raise NotImplementedError

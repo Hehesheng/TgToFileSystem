@@ -3,11 +3,13 @@ import asyncio
 import time
 import hashlib
 import os
+import logging
 
 from backend.TgFileSystemClient import TgFileSystemClient
 from backend.UserManager import UserManager
 import configParse
 
+logger = logging.getLogger(__file__.split("/")[-1])
 
 class TgFileSystemClientManager(object):
     MAX_MANAGE_CLIENTS: int = 10
