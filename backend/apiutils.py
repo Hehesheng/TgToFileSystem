@@ -36,6 +36,22 @@ def get_message_media_name(msg: types.Message) -> str:
             return attr.file_name
     return ""
 
+def get_message_media_name_from_dict(msg: dict[str, any]) -> str:
+    doc = None
+    try:
+        doc = msg['media']['document']
+    except:
+        pass
+    file_name = None
+    if doc is not None:
+        for attr in doc['attributes']:
+            file_name = attr.get('file_name')
+            if file_name != "" and file_name is not None:
+                break
+    if file_name == "" or file_name is None:
+        file_name = "unknown.tmp"
+    return file_name
+
 def timeit_sec(func):
     @wraps(func)
     def timeit_wrapper(*args, **kwargs):

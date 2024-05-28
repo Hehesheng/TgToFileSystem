@@ -51,12 +51,18 @@ class TgToFileListRequestBody(BaseModel):
 @apiutils.atimeit
 async def search_tg_file_list(body: TgToFileListRequestBody):
     try:
+        param = configParse.get_TgToFileSystemParameter()
         res = hints.TotalList()
         res_type = "msg"
         client = await clients_mgr.get_client_force(body.token)
-        res_dict = {}
+        res_dict = []
         res = await client.get_messages_by_search_db(body.chat_id, body.search, limit=body.length, inc=body.inc, offset=body.index)
-        res_dict = [json.loads(item) for item in res]
+        for item in res:
+            msg_info = json.loads(item)
+            file_name = apiutils.get_message_media_name_from_dict(msg_info)
+            msg_info['file_name'] = file_name
+            msg_info['download_url'] = f"{param.base.exposed_url}/tg/api/v1/file/get/{body.chat_id}/{msg_info.get('id')}/{file_name}?sign={body.token}"
+            res_dict.append(msg_info)
 
         response_dict = {
             "client": json.loads(client.to_json()),
@@ -77,19 +83,20 @@ async def get_tg_file_list(body: TgToFileListRequestBody):
         res = hints.TotalList()
         res_type = "chat"
         client = await clients_mgr.get_client_force(body.token)
-        res_dict = {}
-        if body.chat_id == 0:
-            res = await client.get_dialogs(limit=body.length, offset=body.index, refresh=body.refresh)
-            res_dict = [{"id": item.id, "is_channel": item.is_channel,
-                         "is_group": item.is_group, "is_user": item.is_user, "name": item.name, } for item in res]
-        elif body.search != "":
+        res_dict = []
+        if body.search != "":
             res = await client.get_messages_by_search(body.chat_id, search_word=body.search, limit=body.length, offset=body.index, inner_search=body.inner)
-            res_type = "msg"
-            res_dict = [json.loads(item.to_json()) for item in res]
         else:
             res = await client.get_messages(body.chat_id, limit=body.length, offset=body.index)
-            res_type = "msg"
-            res_dict = [json.loads(item.to_json()) for item in res]
+        res_type = "msg"
+        for item in res:
+            file_name = apiutils.get_message_media_name(item)
+            if file_name == "":
+                file_name = "unknown.tmp"
+            msg_info = json.loads(item.to_json())
+            msg_info['file_name'] = file_name
+            msg_info['download_url'] = f"{param.base.exposed_url}/tg/api/v1/file/get/{body.chat_id}/{item.id}/{file_name}?sign={body.token}"
+            res_dict.append(msg_info)
 
         response_dict = {
             "client": json.loads(client.to_json()),
@@ -134,7 +141,7 @@ async def get_tg_file_media_stream(token: str, cid: int, mid: int, request: Requ
             maybe_file_type = mime_type.split("/")[-1]
             file_name = f"{chat_id}.{msg_id}.{maybe_file_type}"
         headers[
-            "Content-Disposition"] = f'Content-Disposition: inline; filename="{file_name.encode("utf-8")}"'
+            "Content-Disposition"] = f'inline; filename="{file_name}"'
 
         if range_header is not None:
             start, end = apiutils.get_range_header(range_header, file_size)
@@ -142,9 +149,13 @@ async def get_tg_file_media_stream(token: str, cid: int, mid: int, request: Requ
             # headers["content-length"] = str(size)
             headers["content-range"] = f"bytes {start}-{end}/{file_size}"
             status_code = status.HTTP_206_PARTIAL_CONTENT
+        else:
+            headers["content-length"] = str(file_size)
+            headers["content-range"] = f"bytes 0-{file_size-1}/{file_size}"
         return StreamingResponse(
             client.streaming_get_iter(msg, start, end, request),
             headers=headers,
+            media_type=mime_type,
             status_code=status_code,
         )
     except Exception as err:
@@ -155,7 +166,13 @@ async def get_tg_file_media_stream(token: str, cid: int, mid: int, request: Requ
 @app.get("/tg/api/v1/file/get/{chat_id}/{msg_id}/{file_name}")
 @apiutils.atimeit
 async def get_tg_file_media(chat_id: int|str, msg_id: int, file_name: str, sign: str, req: Request):
-    return await get_tg_file_media_stream(sign, chat_id, msg_id, req)
+    try:
+        if isinstance(chat_id, str):
+            chat_id = int(chat_id)
+        return await get_tg_file_media_stream(sign, chat_id, msg_id, req)
+    except Exception as err:
+        logger.error(f"{err=}")
+        return Response(json.dumps({"detail": f"{err=}"}), status_code=status.HTTP_404_NOT_FOUND)
 
 
 @app.post("/tg/api/v1/client/login")

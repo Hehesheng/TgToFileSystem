@@ -27,8 +27,7 @@ if 'is_order' not in st.session_state:
     st.session_state.is_order = False
 
 param = configParse.get_TgToFileSystemParameter()
-background_server_url = f"{param.web.base_url}:{param.base.port}/tg/api/v1/file/search"
-download_server_url = f"{param.web.base_url}:{param.base.port}/tg/api/v1/file/msg?token={param.web.token}&cid={param.web.chat_id[0]}&mid="
+background_server_url = f"{param.base.exposed_url}/tg/api/v1/file/search"
 
 
 @st.experimental_fragment
@@ -130,7 +129,7 @@ def do_search_req():
             doc = None
             file_size = 0
             msg_id = str(v['id'])
-            download_url = download_server_url + msg_id
+            download_url = v['download_url']
             url_list.append(download_url)
             try:
                 doc = v['media']['document']

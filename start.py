@@ -5,6 +5,7 @@ import yaml
 import logging
 
 import uvicorn
+from uvicorn.config import LOGGING_CONFIG
 
 import configParse
 from backend import backendapp
@@ -16,6 +17,21 @@ with open('logging_config.yaml', 'r') as f:
 for handler in logging.getLogger().handlers:
     if isinstance(handler, logging.handlers.TimedRotatingFileHandler):
         handler.suffix = "%Y-%m-%d"
+
+LOGGING_CONFIG["formatters"]["default"]["fmt"] = "[%(levelname)s] %(asctime)s [uvicorn.default]:%(message)s"
+LOGGING_CONFIG["formatters"]["access"]["fmt"] = '[%(levelname)s]%(asctime)s [uvicorn.access]:%(client_addr)s - "%(request_line)s" %(status_code)s'
+LOGGING_CONFIG["handlers"]["timed_rotating_file"] = {
+    "class": "logging.handlers.TimedRotatingFileHandler",
+    "filename": "logs/app.log",
+    "when": "midnight",
+    "interval": 1,
+    "backupCount": 7,
+    "level": "INFO",
+    "formatter": "default",
+    "encoding": "utf-8",
+}
+LOGGING_CONFIG["loggers"]["uvicorn"]["handlers"].append("timed_rotating_file")
+LOGGING_CONFIG["loggers"]["uvicorn.access"]["handlers"].append("timed_rotating_file")
 
 logger = logging.getLogger(__file__.split("/")[-1])
 

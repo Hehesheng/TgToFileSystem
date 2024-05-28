@@ -8,6 +8,7 @@ from pydantic import BaseModel
 class TgToFileSystemParameter(BaseModel):
     class BaseParameter(BaseModel):
         salt: str = ""
+        exposed_url: str = "http://127.0.0.1:7777"
         port: int = 7777
         timeit_enable: bool = False
     base: BaseParameter
@@ -34,7 +35,6 @@ class TgToFileSystemParameter(BaseModel):
         enable: bool = False
         token: str = ""
         port: int = 2000
-        base_url: str = "http://127.0.0.1"
         chat_id: list[int] = []
     web: TgWebParameter
 
