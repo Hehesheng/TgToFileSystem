@@ -3,6 +3,7 @@ import logging
 import bisect
 import collections
 import asyncio
+import traceback
 import collections
 from typing import Union, Optional
 
@@ -17,7 +18,6 @@ class MediaChunkHolder(object):
     waiters: collections.deque[asyncio.Future]
     requester: list[Request] = []
     chunk_id: int = 0
-    is_done: bool = False
 
     def __init__(self, chat_id: int, msg_id: int, start: int, target_len: int, mem: Optional[bytes] = None) -> None:
         self.chat_id = chat_id
@@ -53,11 +53,6 @@ class MediaChunkHolder(object):
 
     def is_completed(self) -> bool:
         return self.length >= self.target_len
-
-    def set_done(self) -> None:
-        # self.is_done = True
-        # self.notify_waiters()
-        self.requester.clear()
         
     def notify_waiters(self) -> None:
         while self.waiters:
@@ -69,15 +64,15 @@ class MediaChunkHolder(object):
         self.mem = mem
         self.length = len(self.mem)
         if self.length > self.target_len:
-            raise RuntimeWarning(
-                f"MeidaChunk Overflow:start:{self.start},len:{self.length},tlen:{self.target_len}")
+            logger.warning(RuntimeWarning(
+                f"MeidaChunk Overflow:start:{self.start},len:{self.length},tlen:{self.target_len}"))
 
     def append_chunk_mem(self, mem: bytes) -> None:
         self.mem = self.mem + mem
         self.length = len(self.mem)
         if self.length > self.target_len:
-            raise RuntimeWarning(
-                f"MeidaChunk Overflow:start:{self.start},len:{self.length},tlen:{self.target_len}")
+            logger.warning(RuntimeWarning(
+                f"MeidaChunk Overflow:start:{self.start},len:{self.length},tlen:{self.target_len}"))
         self.notify_waiters()
 
     def add_chunk_requester(self, req: Request) -> None:
@@ -85,15 +80,18 @@ class MediaChunkHolder(object):
 
     async def is_disconneted(self) -> bool:
         while self.requester:
-            res = await self.requester[0].is_disconnected()
-            if res:
-                self.requester.pop(0)
-                continue
-            return res
+            req = self.requester[0]
+            if not await req.is_disconnected():
+                return False
+            try:
+                self.requester.remove(req)
+            except Exception as err:
+                logger.warning(f"{err=}, trace:{traceback.format_exc()}")
+                return False
         return True
 
     async def wait_chunk_update(self) -> None:
-        if self.is_done:
+        if self.is_completed():
             return
         waiter = asyncio.Future()
         self.waiters.append(waiter)

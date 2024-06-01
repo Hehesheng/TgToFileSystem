@@ -21,7 +21,7 @@ logger = logging.getLogger(__file__.split("/")[-1])
 
 class TgFileSystemClient(object):
     MAX_WORKER_ROUTINE = 4
-    SINGLE_NET_CHUNK_SIZE = 256 * 1024  # 256kb
+    SINGLE_NET_CHUNK_SIZE = 512 * 1024  # 512kb
     SINGLE_MEDIA_SIZE = 5 * 1024 * 1024  # 5mb
     api_id: int
     api_hash: str
@@ -245,16 +245,19 @@ class TgFileSystemClient(object):
                 if remain_size <= 0:
                     media_holder.append_chunk_mem(
                         chunk[:len(chunk)+remain_size])
+                else:
+                    media_holder.append_chunk_mem(chunk)
+                if media_holder.is_completed():
                     break
-                media_holder.append_chunk_mem(chunk)
+                if await media_holder.is_disconneted():
+                    raise asyncio.CancelledError("all requester canceled.") 
         except asyncio.CancelledError as err:
-            logger.warning(f"cancel holder:{media_holder}")
+            logger.info(f"cancel holder:{media_holder}")
             self.media_chunk_manager.cancel_media_chunk(media_holder)
         except Exception as err:
             logger.error(
                 f"_download_media_chunk err:{err=},{offset=},{target_size=},{media_holder},\r\n{err=}\r\n{traceback.format_exc()}")
         finally:
-            media_holder.set_done()
             logger.debug(
                 f"downloaded chunk:{time.time()}.{offset=},{target_size=},{media_holder}")
 
@@ -279,7 +282,7 @@ class TgFileSystemClient(object):
                         msg.chat_id, msg.id, align_pos, align_size)
                     holder.add_chunk_requester(req)
                     self.media_chunk_manager.set_media_chunk(holder)
-                    await self.task_queue.put((cur_task_id, self._download_media_chunk(msg, holder)))
+                    self.task_queue.put_nowait((cur_task_id, self._download_media_chunk(msg, holder)))
                 elif not cache_chunk.is_completed():
                     # yield return completed part
                     # await untill completed or pos > end

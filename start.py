@@ -58,4 +58,4 @@ if __name__ == "__main__":
         if ret == 0:
             asyncio.get_event_loop().run_until_complete(run_web_server())
             sys.exit(0)
-    uvicorn.run(backendapp, host="0.0.0.0", port=param.base.port)
+    uvicorn.run(backendapp, host="0.0.0.0", port=param.base.port, app_dir="backend")
