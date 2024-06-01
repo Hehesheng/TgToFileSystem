@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import logging
+from urllib.parse import quote
 
 import uvicorn
 from fastapi import FastAPI, status, Request
@@ -22,6 +23,9 @@ clients_mgr: TgFileSystemClientManager = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    for handler in logging.getLogger().handlers:
+        if isinstance(handler, logging.handlers.TimedRotatingFileHandler):
+            handler.suffix = "%Y-%m-%d"
     global clients_mgr
     param = configParse.get_TgToFileSystemParameter()
     clients_mgr = TgFileSystemClientManager(param)
@@ -61,11 +65,15 @@ async def search_tg_file_list(body: TgToFileListRequestBody):
             msg_info = json.loads(item)
             file_name = apiutils.get_message_media_name_from_dict(msg_info)
             msg_info['file_name'] = file_name
-            msg_info['download_url'] = f"{param.base.exposed_url}/tg/api/v1/file/get/{body.chat_id}/{msg_info.get('id')}/{file_name}?sign={body.token}"
+            msg_info['download_url'] = f"{param.base.exposed_url}/tg/api/v1/file/get/{body.chat_id}/{msg_info.get('id')}/{file_name}"
+            msg_info['src_tg_link'] = f"https://t.me/c/1216816802/21206"
             res_dict.append(msg_info)
 
+        client_dict = json.loads(client.to_json())
+        client_dict['sign'] = body.token
+
         response_dict = {
-            "client": json.loads(client.to_json()),
+            "client": client_dict,
             "type": res_type,
             "length": len(res_dict),
             "list": res_dict,
@@ -141,7 +149,7 @@ async def get_tg_file_media_stream(token: str, cid: int, mid: int, request: Requ
             maybe_file_type = mime_type.split("/")[-1]
             file_name = f"{chat_id}.{msg_id}.{maybe_file_type}"
         headers[
-            "Content-Disposition"] = f'inline; filename="{file_name}"'
+            "Content-Disposition"] = f"inline; filename*=utf-8'{quote(file_name)}'"
 
         if range_header is not None:
             start, end = apiutils.get_range_header(range_header, file_size)
@@ -183,7 +191,13 @@ async def login_new_tg_file_client():
 
 @app.get("/tg/api/v1/client/link_convert")
 @apiutils.atimeit
-async def convert_tg_msg_link_media_stream(link: str, token: str):
+async def convert_tg_msg_link_media_stream(link: str, sign: str):
+    raise NotImplementedError
+
+
+@app.get("/tg/api/v1/client/profile_photo")
+@apiutils.atimeit
+async def get_tg_chat_profile_photo(chat_id: int, sign: str):
     raise NotImplementedError
 
 

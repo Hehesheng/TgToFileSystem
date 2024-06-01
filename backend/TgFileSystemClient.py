@@ -299,8 +299,8 @@ class TgFileSystemClient(object):
             self.worker_routines.append(worker_routine)
         if len(self.client_param.whitelist_chat) > 0:
             self._register_update_event(from_users=self.client_param.whitelist_chat)
-            # await self.task_queue.put((self._get_unique_task_id(), self._cache_whitelist_chat()))
-            await self.task_queue.put((self._get_unique_task_id(), self._cache_whitelist_chat2()))
+            await self.task_queue.put((self._get_unique_task_id(), self._cache_whitelist_chat()))
+            # await self.task_queue.put((self._get_unique_task_id(), self._cache_whitelist_chat2()))
 
     async def stop(self) -> None:
         await self.client.loop.create_task(self._cancel_tasks())
@@ -322,6 +322,7 @@ class TgFileSystemClient(object):
                 if len(self.db.get_msg_by_unique_id(self.db.generate_unique_id_by_msg(self.me, msg))) != 0:
                     continue
                 self.db.insert_by_message(self.me, msg)
+            logger.info(f"{chat_id} quit cache task.")
 
     async def _cache_whitelist_chat(self):
         for chat_id in self.client_param.whitelist_chat:
@@ -343,6 +344,7 @@ class TgFileSystemClient(object):
             else:
                 async for msg in self.client.iter_messages(chat_id):
                     self.db.insert_by_message(self.me, msg)
+            logger.info(f"{chat_id} quit cache task.")
             
 
     @_acheck_before_call

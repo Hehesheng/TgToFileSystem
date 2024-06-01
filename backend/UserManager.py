@@ -55,7 +55,7 @@ class UserManager(object):
 
     def get_all_msg_by_chat_id(self, chat_id: int) -> list[any]:
         res = self.cur.execute(
-            "SELECT * FROM message WHERE chat_id == ? ORDER BY date_time DESC", (chat_id,))
+            "SELECT * FROM message WHERE chat_id = ? ORDER BY date_time DESC", (chat_id,))
         return res.fetchall()
 
     def get_msg_by_chat_id_and_keyword(self, chat_id: int, keyword: str, limit: int = 10, offset: int = 0, inc: bool = False, ignore_case: bool = False) -> list[any]:
@@ -63,23 +63,24 @@ class UserManager(object):
         if ignore_case:
             keyword_condition = "LOWER(msg_ctx) LIKE LOWER('%{key}%') OR LOWER(file_name) LIKE LOWER('%{key}%')"
         keyword_condition = keyword_condition.format(key=keyword)
-        execute_script = f"SELECT * FROM message WHERE chat_id == {chat_id} AND ({keyword_condition}) ORDER BY date_time {'' if inc else 'DESC '}LIMIT {limit} OFFSET {offset}"
+        execute_script = f"SELECT * FROM message WHERE chat_id = {chat_id} AND ({keyword_condition}) ORDER BY date_time {'' if inc else 'DESC '}LIMIT {limit} OFFSET {offset}"
+        logger.info(f"{execute_script=}")
         res = self.cur.execute(execute_script)
         return res
 
     def get_oldest_msg_by_chat_id(self, chat_id: int) -> list[any]:
         res = self.cur.execute(
-            "SELECT * FROM message WHERE chat_id == ? ORDER BY date_time LIMIT 1", (chat_id,))
+            "SELECT * FROM message WHERE chat_id = ? ORDER BY date_time LIMIT 1", (chat_id,))
         return res.fetchall()
 
     def get_newest_msg_by_chat_id(self, chat_id: int) -> list[any]:
         res = self.cur.execute(
-            "SELECT * FROM message WHERE chat_id == ? ORDER BY date_time DESC LIMIT 1", (chat_id,))
+            "SELECT * FROM message WHERE chat_id = ? ORDER BY date_time DESC LIMIT 1", (chat_id,))
         return res.fetchall()
 
     def get_msg_by_unique_id(self, unique_id: str) -> list[any]:
         res = self.cur.execute(
-            "SELECT * FROM message WHERE unique_id == ? ORDER BY date_time DESC LIMIT 1", (unique_id,))
+            "SELECT * FROM message WHERE unique_id = ? ORDER BY date_time DESC LIMIT 1", (unique_id,))
         return res.fetchall()
 
     @unique
@@ -178,7 +179,7 @@ class UserManager(object):
                 "CREATE TABLE user(client_id primary key, username, phone, tg_user_id, last_login_time)")
         if len(self.cur.execute("SELECT name FROM sqlite_master WHERE name='message'").fetchall()) == 0:
             self.cur.execute(
-                "CREATE TABLE message(unique_id varchar(64) primary key, user_id int NOT NULL, chat_id int NOT NULL, msg_id int NOT NULL, msg_type varchar(64), msg_ctx, mime_type, file_name, msg_js, date_time int)")
+                "CREATE TABLE message(unique_id varchar(64) primary key, user_id int NOT NULL, chat_id int NOT NULL, msg_id int NOT NULL, msg_type varchar(64), msg_ctx text, mime_type text, file_name text, msg_js text, date_time int NOT NULL)")
 
 
 if __name__ == "__main__":
