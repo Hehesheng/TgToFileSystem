@@ -94,7 +94,7 @@ def do_search_req():
                 st.session_state.force_skip = True
                 st.rerun()
 
-    def media_file_res_container(index: int, msg_ctx: str, file_name: str, file_size: int, url: str):
+    def media_file_res_container(index: int, msg_ctx: str, file_name: str, file_size: int, url: str, src_link: str):
         file_size_str = f"{file_size/1024/1024:.2f}MB"
         container = st.container()
         container_columns = container.columns([1, 99])
@@ -104,7 +104,7 @@ def do_search_req():
 
         expender_title = f"{(msg_ctx if len(msg_ctx) < 103 else msg_ctx[:100] + '...')} &mdash; *{file_size_str}*"
         popover = container_columns[1].popover(expender_title, use_container_width=True)
-        popover_columns = popover.columns([1, 3])
+        popover_columns = popover.columns([1, 3, 1])
         if url:
             popover_columns[0].video(url)
         else:
@@ -112,7 +112,8 @@ def do_search_req():
         popover_columns[1].markdown(f'{msg_ctx}')
         popover_columns[1].markdown(f'**{file_name}**')
         popover_columns[1].markdown(f'文件大小：*{file_size_str}*')
-        popover_columns[1].link_button('⬇️Download Link', url)
+        popover_columns[2].link_button('⬇️Download Link', url, use_container_width=True)
+        popover_columns[2].link_button('🔗Telegram Link', src_link, use_container_width=True)
 
     @st.experimental_fragment
     def show_search_res(res: dict[str, any]):
@@ -134,7 +135,9 @@ def do_search_req():
             file_name = None
             file_size = 0
             download_url = ""
+            src_link = ""
             try:
+                src_link = v['src_tg_link']
                 msg_ctx = v['message']
                 msg_id = str(v['id'])
                 doc = v['media']['document']
@@ -152,7 +155,7 @@ def do_search_req():
             except Exception as err:
                 msg_ctx = f"{err=}\r\n\r\n" + msg_ctx
             media_file_res_container(
-                i, msg_ctx, file_name, file_size, download_url)
+                i, msg_ctx, file_name, file_size, download_url, src_link)
         page_switch_render()
 
         show_text = ""

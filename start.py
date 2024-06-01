@@ -16,7 +16,7 @@ with open('logging_config.yaml', 'r') as f:
     logging.config.dictConfig(yaml.safe_load(f.read()))
 
 LOGGING_CONFIG["formatters"]["default"]["fmt"] = "[%(levelname)s] %(asctime)s [uvicorn.default]:%(message)s"
-LOGGING_CONFIG["formatters"]["access"]["fmt"] = '[%(levelname)s]%(asctime)s [uvicorn.access]:%(client_addr)s - "%(request_line)s" %(status_code)s'
+LOGGING_CONFIG["formatters"]["access"]["fmt"] = '[%(levelname)s] %(asctime)s [uvicorn.access]:%(client_addr)s - "%(request_line)s" %(status_code)s'
 LOGGING_CONFIG["handlers"]["timed_rotating_api_file"] = {
     "class": "logging.handlers.TimedRotatingFileHandler",
     "filename": "logs/app.log",

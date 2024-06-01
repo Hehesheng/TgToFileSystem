@@ -52,6 +52,20 @@ def get_message_media_name_from_dict(msg: dict[str, any]) -> str:
         file_name = "unknown.tmp"
     return file_name
 
+def get_message_chat_id_from_dict(msg: dict[str, any]) -> int:
+    try:
+        return msg['peer_id']['channel_id']
+    except:
+        pass
+    return 0
+
+def get_message_msg_id_from_dict(msg: dict[str, any]) -> int:
+    try:
+        return msg['id']
+    except:
+        pass
+    return 0
+
 def timeit_sec(func):
     @wraps(func)
     def timeit_wrapper(*args, **kwargs):
