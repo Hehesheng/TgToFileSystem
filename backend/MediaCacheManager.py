@@ -167,7 +167,9 @@ class MediaChunkHolderManager(object):
 
     def __init__(self) -> None:
         self.chunk_lru = collections.OrderedDict()
-        self.disk_chunk_cache = diskcache.Cache(f"{os.path.dirname(__file__)}/cache_media")
+        self.disk_chunk_cache = diskcache.Cache(
+            f"{os.path.dirname(__file__)}/cache_media", size_limit=MediaChunkHolderManager.MAX_CACHE_SIZE
+        )
         self._restore_cache()
 
     def _restore_cache(self) -> None:
@@ -178,6 +180,8 @@ class MediaChunkHolderManager(object):
                     self._set_media_chunk_index(holder.info)
             except Exception as err:
                 logger.warning(f"restore, {err=},{traceback.format_exc()}")
+        while self.current_cache_size > self.MAX_CACHE_SIZE:
+            self._remove_pop_chunk()
 
     def get_chunk_holder_by_info(self, info: ChunkInfo) -> MediaChunkHolder:
         holder = self.incompleted_chunk.get(info.id)

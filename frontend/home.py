@@ -13,5 +13,7 @@ for v in backend_status["clients"]:
 
 if need_login:
     import login
+    login.loop()
 else:
     import search
+    search.loop()

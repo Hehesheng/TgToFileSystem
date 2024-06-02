@@ -42,7 +42,7 @@ class TgFileSystemClient(object):
     # task should: (task_id, callabledFunc)
     task_queue: asyncio.Queue
     task_id: int = 0
-    me: Union[types.User, types.InputPeerUser]
+    me: Union[types.User, types.InputPeerUser] = None
     # client config
     client_param: configParse.TgToFileSystemParameter.ClientConfigPatameter
 
