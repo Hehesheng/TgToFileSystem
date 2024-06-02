@@ -36,6 +36,9 @@ class TgFileSystemClient(object):
     worker_routines: list[asyncio.Task] = []
     qr_login: QRLogin | None = None
     login_task: asyncio.Task | None = None
+    # rsa key
+    public_key: rsa.PublicKey
+    private_key: rsa.PrivateKey
     # task should: (task_id, callabledFunc)
     task_queue: asyncio.Queue
     task_id: int = 0
@@ -61,6 +64,7 @@ class TgFileSystemClient(object):
             if param.proxy.enable
             else {}
         )
+        self.public_key, self.private_key = rsa.newkeys(1024)
         self.client_param = next(
             (client_param for client_param in param.clients if client_param.token == session_name),
             configParse.TgToFileSystemParameter.ClientConfigPatameter(),
@@ -311,6 +315,7 @@ class TgFileSystemClient(object):
                 else:
                     media_holder.append_chunk_mem(chunk)
                 if media_holder.is_completed():
+                    media_holder.set_done()
                     break
                 if await media_holder.is_disconneted():
                     raise asyncio.CancelledError("all requester canceled.")
@@ -338,7 +343,7 @@ class TgFileSystemClient(object):
                     # align_pos = pos // self.SINGLE_MEDIA_SIZE * self.SINGLE_MEDIA_SIZE
                     align_pos = pos
                     align_size = min(self.SINGLE_MEDIA_SIZE, file_size - align_pos)
-                    holder = MediaChunkHolder(msg.chat_id, msg.id, align_pos, align_size)
+                    holder = self.media_chunk_manager.create_media_chunk_holder(msg.chat_id, msg.id, align_pos, align_size)
                     holder.add_chunk_requester(req)
                     self.media_chunk_manager.set_media_chunk(holder)
                     self.task_queue.put_nowait((cur_task_id, self._download_media_chunk(msg, holder)))

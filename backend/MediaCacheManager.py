@@ -5,8 +5,9 @@ import bisect
 import collections
 import asyncio
 import traceback
+import hashlib
 import collections
-from typing import Union, Optional
+from typing import Union, Optional, Callable
 
 import diskcache
 from fastapi import Request
@@ -14,65 +15,87 @@ from telethon import types
 
 logger = logging.getLogger(__file__.split("/")[-1])
 
+
+@functools.total_ordering
+class ChunkInfo(object):
+    def __init__(self, md5id: str, chat_id: int, msg_id: int, start: int, length: int) -> None:
+        self.id = md5id
+        self.chat_id = chat_id
+        self.msg_id = msg_id
+        self.start = start
+        self.length = length
+
+    def __repr__(self) -> str:
+        return f"chunkinfo:id:{self.id},cid:{self.chat_id},mid:{self.msg_id},offset:{self.start},len:{self.length}"
+
+    def __eq__(self, other: Union["ChunkInfo", int]):
+        if isinstance(other, int):
+            return self.start == other
+        return self.start == other.start
+
+    def __le__(self, other: Union["ChunkInfo", int]):
+        if isinstance(other, int):
+            return self.start <= other
+        return self.start <= other.start
+
+
 @functools.total_ordering
 class MediaChunkHolder(object):
     waiters: collections.deque[asyncio.Future]
     requester: list[Request] = []
-    chunk_id: int = 0
     unique_id: str = ""
+    info: ChunkInfo
+    callback: Callable = None
 
     @staticmethod
     def generate_id(chat_id: int, msg_id: int, start: int) -> str:
         return f"{chat_id}:{msg_id}:{start}"
 
-    def __init__(self, chat_id: int, msg_id: int, start: int, target_len: int, mem: Optional[bytes] = None) -> None:
-        self.chat_id = chat_id
-        self.msg_id = msg_id
-        self.start = start
-        self.target_len = target_len
-        self.mem = mem or bytes()
+    def __init__(self, chat_id: int, msg_id: int, start: int, target_len: int, callback: Callable = None) -> None:
+        self.unique_id = MediaChunkHolder.generate_id(chat_id, msg_id, start)
+        self.info = ChunkInfo(hashlib.md5(self.unique_id.encode()).hexdigest(), chat_id, msg_id, start, target_len)
+        self.mem = bytes()
         self.length = len(self.mem)
         self.waiters = collections.deque()
-        self.unique_id = MediaChunkHolder.generate_id(chat_id, msg_id, start)
+        self.callback = callback
 
     def __repr__(self) -> str:
-        return f"MediaChunk,start:{self.start},len:{self.length}"
+        return f"MediaChunk,{self.info},len:{self.length}"
 
-    def __eq__(self, other: 'MediaChunkHolder'):
+    def __eq__(self, other: Union["MediaChunkHolder", ChunkInfo, int]):
         if isinstance(other, int):
-            return self.start == other
-        return self.start == other.start
+            return self.info.start == other
+        if isinstance(other, ChunkInfo):
+            return self.info.start == other.start
+        return self.info.start == other.info.start
 
-    def __le__(self, other: 'MediaChunkHolder'):
+    def __le__(self, other: Union["MediaChunkHolder", ChunkInfo, int]):
         if isinstance(other, int):
-            return self.start <= other
-        return self.start <= other.start
-
-    def __gt__(self, other: 'MediaChunkHolder'):
-        if isinstance(other, int):
-            return self.start > other
-        return self.start > other.start
-
-    def __add__(self, other: Union['MediaChunkHolder', bytes]):
-        if isinstance(other, MediaChunkHolder):
-            other = other.mem
-        self.append_chunk_mem(other)
+            return self.info.start <= other
+        if isinstance(other, ChunkInfo):
+            return self.info.start <= other.start
+        return self.info.start <= other.info.start
 
     def is_completed(self) -> bool:
-        return self.length >= self.target_len
+        return self.length >= self.info.length
+
+    @property
+    def chunk_id(self) -> str:
+        return self.info.id
+
+    @property
+    def start(self) -> int:
+        return self.info.start
+
+    @property
+    def target_len(self) -> int:
+        return self.info.length
 
     def notify_waiters(self) -> None:
         while self.waiters:
             waiter = self.waiters.popleft()
             if not waiter.done():
                 waiter.set_result(None)
-
-    def _set_chunk_mem(self, mem: Optional[bytes]) -> None:
-        self.mem = mem
-        self.length = len(self.mem)
-        if self.length > self.target_len:
-            logger.warning(RuntimeWarning(
-                f"MeidaChunk Overflow:start:{self.start},len:{self.length},tlen:{self.target_len}"))
 
     def append_chunk_mem(self, mem: bytes) -> None:
         self.mem = self.mem + mem
@@ -83,6 +106,8 @@ class MediaChunkHolder(object):
         self.notify_waiters()
 
     def add_chunk_requester(self, req: Request) -> None:
+        if self.is_completed():
+            return
         self.requester.append(req)
 
     async def is_disconneted(self) -> bool:
@@ -111,23 +136,57 @@ class MediaChunkHolder(object):
             except ValueError:
                 pass
 
-class MediaChunkHolderManager(object):
-    MAX_CACHE_SIZE = 1024 * 1024 * 1024  # 1Gb
-    current_cache_size: int = 0
-    # chat_id -> msg_id -> offset -> mem
-    chunk_cache: dict[int, dict[int,
-                                list[MediaChunkHolder]]] = {}
-    # ChunkHolderId -> ChunkHolder
-    unique_chunk_id: int = 0
-    chunk_lru: collections.OrderedDict[int, MediaChunkHolder]
+    def set_done(self) -> None:
+        if self.callback is None:
+            return
+        callback = self.callback
+        self.callback = None
+        callback(self)
 
+    def can_store_in_disk(self) -> bool:
+        if not self.is_completed():
+            return False
+        if not self.is_disconneted():
+            return False
+        # clear all waiter and requester
+        self.notify_waiters()
+        return True
+
+
+class MediaChunkHolderManager(object):
+    MAX_CACHE_SIZE = 2**32  # 4GB
+    current_cache_size: int = 0
+    # chunk unique id -> ChunkHolder
     disk_chunk_cache: diskcache.Cache
+    # incompleted chunk
+    incompleted_chunk: dict[str, MediaChunkHolder] = {}
+    # chunk id -> ChunkInfo
+    chunk_lru: collections.OrderedDict[str, ChunkInfo]
+    # chat_id -> msg_id -> list[ChunkInfo]
+    chunk_cache: dict[int, dict[int, list[ChunkInfo]]] = {}
 
     def __init__(self) -> None:
         self.chunk_lru = collections.OrderedDict()
-        self.disk_chunk_cache = diskcache.Cache(f"{os.path.dirname(__file__)}/cache_media", size_limit=2**30)
+        self.disk_chunk_cache = diskcache.Cache(f"{os.path.dirname(__file__)}/cache_media")
+        self._restore_cache()
 
-    def _get_media_msg_cache(self, msg: types.Message) -> Optional[list[MediaChunkHolder]]:
+    def _restore_cache(self) -> None:
+        for id in self.disk_chunk_cache.iterkeys():
+            try:
+                holder: MediaChunkHolder = self.disk_chunk_cache.get(id)
+                if holder is not None:
+                    self._set_media_chunk_index(holder.info)
+            except Exception as err:
+                logger.warning(f"restore, {err=},{traceback.format_exc()}")
+
+    def get_chunk_holder_by_info(self, info: ChunkInfo) -> MediaChunkHolder:
+        holder = self.incompleted_chunk.get(info.id)
+        if holder is not None:
+            return holder
+        holder = self.disk_chunk_cache.get(info.id)
+        return holder
+
+    def _get_media_msg_cache(self, msg: types.Message) -> Optional[list[ChunkInfo]]:
         chat_cache = self.chunk_cache.get(msg.chat_id)
         if chat_cache is None:
             return None
@@ -140,150 +199,77 @@ class MediaChunkHolderManager(object):
         pos = bisect.bisect_left(msg_cache, start)
         if pos == len(msg_cache):
             pos = pos - 1
-            if msg_cache[pos].start <= start and msg_cache[pos].start + msg_cache[pos].target_len > start:
-                return msg_cache[pos]
+            if msg_cache[pos].start <= start and msg_cache[pos].start + msg_cache[pos].length > start:
+                return self.get_chunk_holder_by_info(msg_cache[pos])
             return None
         elif msg_cache[pos].start == start:
-            return msg_cache[pos]
+            return self.get_chunk_holder_by_info(msg_cache[pos])
         elif pos > 0:
             pos = pos - 1
-            if msg_cache[pos].start <= start and msg_cache[pos].start + msg_cache[pos].target_len > start:
-                return msg_cache[pos]
+            if msg_cache[pos].start <= start and msg_cache[pos].start + msg_cache[pos].length > start:
+                return self.get_chunk_holder_by_info(msg_cache[pos])
             return None
         return None
 
-    def _remove_pop_chunk(self, pop_chunk: MediaChunkHolder) -> None:
-        self.chunk_cache[pop_chunk.chat_id][pop_chunk.msg_id].remove(
-            pop_chunk.start)
-        self.current_cache_size -= pop_chunk.target_len
-        if len(self.chunk_cache[pop_chunk.chat_id][pop_chunk.msg_id]) == 0:
-            self.chunk_cache[pop_chunk.chat_id].pop(pop_chunk.msg_id)
-            if len(self.chunk_cache[pop_chunk.chat_id]) == 0:
-                self.chunk_cache.pop(pop_chunk.chat_id)
+    def _remove_pop_chunk(self, pop_chunk: ChunkInfo = None) -> None:
+        try:
+            if pop_chunk is None:
+                dummy = self.chunk_lru.popitem(last=False)
+                pop_chunk = dummy[1]
+            self.chunk_cache[pop_chunk.chat_id][pop_chunk.msg_id].remove(pop_chunk.start)
+            self.current_cache_size -= pop_chunk.length
+            if len(self.chunk_cache[pop_chunk.chat_id][pop_chunk.msg_id]) == 0:
+                self.chunk_cache[pop_chunk.chat_id].pop(pop_chunk.msg_id)
+                if len(self.chunk_cache[pop_chunk.chat_id]) == 0:
+                    self.chunk_cache.pop(pop_chunk.chat_id)
+            pop_holder = self.incompleted_chunk.get(pop_chunk.id)
+            if pop_holder is not None:
+                self.incompleted_chunk.pop(pop_chunk.id)
+                return
+            suc = self.disk_chunk_cache.delete(pop_chunk.id)
+            if not suc:
+                logger.warning(f"could not del, {pop_chunk}")
+        except Exception as err:
+            logger.warning(f"remove chunk,{err=},{traceback.format_exc()}")
+
+    def create_media_chunk_holder(self, chat_id: int, msg_id: int, start: int, target_len: int) -> MediaChunkHolder:
+        def holder_completed_callback(holder: MediaChunkHolder):
+            cache_holder = self.incompleted_chunk.pop(holder.chunk_id, None)
+            if cache_holder is None:
+                logger.warning(f"the holder not in mem, {holder}")
+                return
+            self.disk_chunk_cache.set(holder.chunk_id, holder)
+
+        return MediaChunkHolder(chat_id, msg_id, start, target_len, callback=holder_completed_callback)
 
     def get_media_chunk(self, msg: types.Message, start: int, lru: bool = True) -> Optional[MediaChunkHolder]:
         res = self._get_media_chunk_cache(msg, start)
+        logger.debug(f"get_media_chunk:{res}")
         if res is None:
             return None
         if lru:
             self.chunk_lru.move_to_end(res.chunk_id)
         return res
 
+    def _set_media_chunk_index(self, info: ChunkInfo) -> None:
+        self.chunk_lru[info.id] = info
+        self.chunk_cache.setdefault(info.chat_id, {})
+        self.chunk_cache[info.chat_id].setdefault(info.msg_id, [])
+        bisect.insort(self.chunk_cache[info.chat_id][info.msg_id], info)
+        self.current_cache_size += info.length
+
     def set_media_chunk(self, chunk: MediaChunkHolder) -> None:
-        cache_chat = self.chunk_cache.setdefault(chunk.chat_id, {})
-        cache_msg = cache_chat.setdefault(chunk.msg_id, [])
-        chunk.chunk_id = self.unique_chunk_id
-        self.unique_chunk_id += 1
-        bisect.insort(cache_msg, chunk)
-        self.chunk_lru[chunk.chunk_id] = chunk
-        self.current_cache_size += chunk.target_len
+        can_store = chunk.can_store_in_disk()
+        if can_store:
+            self.disk_chunk_cache.set(chunk.chunk_id, chunk)
+        else:
+            self.incompleted_chunk[chunk.chunk_id] = chunk
+        self._set_media_chunk_index(chunk.info)
         while self.current_cache_size > self.MAX_CACHE_SIZE:
-            dummy = self.chunk_lru.popitem(last=False)
-            self._remove_pop_chunk(dummy[1])
+            self._remove_pop_chunk()
 
     def cancel_media_chunk(self, chunk: MediaChunkHolder) -> None:
-        cache_chat = self.chunk_cache.get(chunk.chat_id)
-        if cache_chat is None:
-            return
-        cache_msg = cache_chat.get(chunk.msg_id)
-        if cache_msg is None:
-            return
         dummy = self.chunk_lru.pop(chunk.chunk_id, None)
         if dummy is None:
             return
         self._remove_pop_chunk(dummy)
-
-
-@functools.total_ordering
-class MediaBlockHolder(object):
-    waiters: collections.deque[asyncio.Future]
-    chunk_id: int = 0
-
-    def __init__(self, chat_id: int, msg_id: int, start: int, target_len: int) -> None:
-        self.chat_id = chat_id
-        self.msg_id = msg_id
-        self.start = start
-        self.target_len = target_len
-        self.mem = bytes()
-        self.length = len(self.mem)
-        self.waiters = collections.deque()
-
-    def __repr__(self) -> str:
-        return f"MediaBlockHolder,id:{self.chat_id}-{self.msg_id},start:{self.start},len:{self.length}/{self.target_len}"
-
-    def __eq__(self, other: Union['MediaBlockHolder', int]):
-        if isinstance(other, int):
-            return self.start == other
-        return self.start == other.start
-
-    def __le__(self, other: Union['MediaBlockHolder', int]):
-        if isinstance(other, int):
-            return self.start <= other
-        return self.start <= other.start
-
-    def __gt__(self, other: Union['MediaBlockHolder', int]):
-        if isinstance(other, int):
-            return self.start > other
-        return self.start > other.start
-
-    def __add__(self, other: Union['MediaBlockHolder', bytes]):
-        if isinstance(other, MediaBlockHolder):
-            other = other.mem
-        self.append_mem(other.mem)
-
-    def is_completed(self) -> bool:
-        return self.length >= self.target_len
-        
-    def notify_waiters(self) -> None:
-        while self.waiters:
-            waiter = self.waiters.popleft()
-            if not waiter.done():
-                waiter.set_result(None)
-
-    def append_mem(self, mem: bytes) -> None:
-        self.mem = self.mem + mem
-        self.length = len(self.mem)
-        self.notify_waiters()
-        if self.length > self.target_len:
-            logger.warning(f"MeidaBlock Overflow:{self}")
-
-    async def wait_update(self) -> None:
-        if self.is_completed():
-            return
-        waiter = asyncio.Future()
-        self.waiters.append(waiter)
-        try:
-            await waiter
-        except:
-            waiter.cancel()
-            try:
-                self.waiters.remove(waiter)
-            except ValueError:
-                pass
-
-@functools.total_ordering
-class BlockInfo(object):
-    def __init__(self, hashid: int, offset: int, length: int, in_mem: bool) -> None:
-        self.hashid = hashid
-        self.offset = offset
-        self.length = length
-        self.in_mem = in_mem
-
-    def __eq__(self, other: Union['BlockInfo', int]):
-        if isinstance(other, int):
-            return self.offset == other
-        return self.offset == other.offset
-
-    def __le__(self, other: Union['BlockInfo', int]):
-        if isinstance(other, int):
-            return self.offset <= other
-        return self.offset <= other.offset
-
-class MediaBlockHolderManager(object):
-
-    DEFAULT_MAX_CACHE_SIZE = 1024 * 1024 * 1024  # 1Gb
-    # chat_id -> msg_id -> list[BlockInfo]
-    chunk_cache: dict[int, dict[int, list[BlockInfo]]] = {}
-
-    def __init__(self, limit_size: int = DEFAULT_MAX_CACHE_SIZE, dir: str = 'cache') -> None:
-        pass

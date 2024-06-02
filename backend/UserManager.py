@@ -3,6 +3,7 @@ from enum import Enum, IntEnum, unique, auto
 import sqlite3
 import logging
 import datetime
+import traceback
 
 from pydantic import BaseModel
 from telethon import types
@@ -146,7 +147,7 @@ class UserManager(object):
                         file_name = attr.file_name
                 msg_type = UserManager.MessageTypeEnum.FILE.value
         except Exception as err:
-            logger.error(f"{err=}")
+            logger.error(f"{err=},{traceback.format_exc()}")
         insert_data = (
             unique_id,
             user_id,
@@ -164,7 +165,7 @@ class UserManager(object):
             self.cur.execute(execute_script, insert_data)
             self.con.commit()
         except Exception as err:
-            logger.error(f"{err=}")
+            logger.error(f"{err=},{traceback.format_exc()}")
 
     @unique
     class ColumnEnum(IntEnum):
