@@ -1,3 +1,4 @@
+import os
 import functools
 import logging
 import bisect
@@ -18,6 +19,11 @@ class MediaChunkHolder(object):
     waiters: collections.deque[asyncio.Future]
     requester: list[Request] = []
     chunk_id: int = 0
+    unique_id: str = ""
+
+    @staticmethod
+    def generate_id(chat_id: int, msg_id: int, start: int) -> str:
+        return f"{chat_id}:{msg_id}:{start}"
 
     def __init__(self, chat_id: int, msg_id: int, start: int, target_len: int, mem: Optional[bytes] = None) -> None:
         self.chat_id = chat_id
@@ -27,6 +33,7 @@ class MediaChunkHolder(object):
         self.mem = mem or bytes()
         self.length = len(self.mem)
         self.waiters = collections.deque()
+        self.unique_id = MediaChunkHolder.generate_id(chat_id, msg_id, start)
 
     def __repr__(self) -> str:
         return f"MediaChunk,start:{self.start},len:{self.length}"
@@ -53,7 +60,7 @@ class MediaChunkHolder(object):
 
     def is_completed(self) -> bool:
         return self.length >= self.target_len
-        
+
     def notify_waiters(self) -> None:
         while self.waiters:
             waiter = self.waiters.popleft()
@@ -114,8 +121,11 @@ class MediaChunkHolderManager(object):
     unique_chunk_id: int = 0
     chunk_lru: collections.OrderedDict[int, MediaChunkHolder]
 
+    disk_chunk_cache: diskcache.Cache
+
     def __init__(self) -> None:
         self.chunk_lru = collections.OrderedDict()
+        self.disk_chunk_cache = diskcache.Cache(f"{os.path.dirname(__file__)}/cache_media", size_limit=2**30)
 
     def _get_media_msg_cache(self, msg: types.Message) -> Optional[list[MediaChunkHolder]]:
         chat_cache = self.chunk_cache.get(msg.chat_id)
@@ -160,14 +170,8 @@ class MediaChunkHolderManager(object):
         return res
 
     def set_media_chunk(self, chunk: MediaChunkHolder) -> None:
-        cache_chat = self.chunk_cache.get(chunk.chat_id)
-        if cache_chat is None:
-            self.chunk_cache[chunk.chat_id] = {}
-            cache_chat = self.chunk_cache[chunk.chat_id]
-        cache_msg = cache_chat.get(chunk.msg_id)
-        if cache_msg is None:
-            cache_chat[chunk.msg_id] = []
-            cache_msg = cache_chat[chunk.msg_id]
+        cache_chat = self.chunk_cache.setdefault(chunk.chat_id, {})
+        cache_msg = cache_chat.setdefault(chunk.msg_id, [])
         chunk.chunk_id = self.unique_chunk_id
         self.unique_chunk_id += 1
         bisect.insort(cache_msg, chunk)
@@ -283,4 +287,3 @@ class MediaBlockHolderManager(object):
 
     def __init__(self, limit_size: int = DEFAULT_MAX_CACHE_SIZE, dir: str = 'cache') -> None:
         pass
-

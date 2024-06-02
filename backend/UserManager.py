@@ -9,6 +9,7 @@ from telethon import types
 
 logger = logging.getLogger(__file__.split("/")[-1])
 
+
 class UserUpdateParam(BaseModel):
     client_id: str
     username: str
@@ -31,6 +32,8 @@ class MessageUpdateParam(BaseModel):
 
 class UserManager(object):
     def __init__(self) -> None:
+        if not os.path.exists(os.path.dirname(__file__) + "/db"):
+            os.mkdir(os.path.dirname(__file__) + "/db")
         self.con = sqlite3.connect(f"{os.path.dirname(__file__)}/db/user.db")
         self.cur = self.con.cursor()
         if not self._table_has_been_inited():
@@ -45,7 +48,7 @@ class UserManager(object):
 
     def update_message(self) -> None:
         raise NotImplementedError
-    
+
     def generate_unique_id_by_msg(self, me: types.User, msg: types.Message) -> str:
         user_id = me.id
         chat_id = msg.chat_id
@@ -55,10 +58,20 @@ class UserManager(object):
 
     def get_all_msg_by_chat_id(self, chat_id: int) -> list[any]:
         res = self.cur.execute(
-            "SELECT * FROM message WHERE chat_id = ? ORDER BY date_time DESC", (chat_id,))
+            "SELECT * FROM message WHERE chat_id = ? ORDER BY date_time DESC",
+            (chat_id,),
+        )
         return res.fetchall()
 
-    def get_msg_by_chat_id_and_keyword(self, chat_id: int, keyword: str, limit: int = 10, offset: int = 0, inc: bool = False, ignore_case: bool = False) -> list[any]:
+    def get_msg_by_chat_id_and_keyword(
+        self,
+        chat_id: int,
+        keyword: str,
+        limit: int = 10,
+        offset: int = 0,
+        inc: bool = False,
+        ignore_case: bool = False,
+    ) -> list[any]:
         keyword_condition = "msg_ctx LIKE '%{key}%' OR file_name LIKE '%{key}%'"
         if ignore_case:
             keyword_condition = "LOWER(msg_ctx) LIKE LOWER('%{key}%') OR LOWER(file_name) LIKE LOWER('%{key}%')"
@@ -70,17 +83,23 @@ class UserManager(object):
 
     def get_oldest_msg_by_chat_id(self, chat_id: int) -> list[any]:
         res = self.cur.execute(
-            "SELECT * FROM message WHERE chat_id = ? ORDER BY date_time LIMIT 1", (chat_id,))
+            "SELECT * FROM message WHERE chat_id = ? ORDER BY date_time LIMIT 1",
+            (chat_id,),
+        )
         return res.fetchall()
 
     def get_newest_msg_by_chat_id(self, chat_id: int) -> list[any]:
         res = self.cur.execute(
-            "SELECT * FROM message WHERE chat_id = ? ORDER BY date_time DESC LIMIT 1", (chat_id,))
+            "SELECT * FROM message WHERE chat_id = ? ORDER BY date_time DESC LIMIT 1",
+            (chat_id,),
+        )
         return res.fetchall()
 
     def get_msg_by_unique_id(self, unique_id: str) -> list[any]:
         res = self.cur.execute(
-            "SELECT * FROM message WHERE unique_id = ? ORDER BY date_time DESC LIMIT 1", (unique_id,))
+            "SELECT * FROM message WHERE unique_id = ? ORDER BY date_time DESC LIMIT 1",
+            (unique_id,),
+        )
         return res.fetchall()
 
     @unique
@@ -128,8 +147,18 @@ class UserManager(object):
                 msg_type = UserManager.MessageTypeEnum.FILE.value
         except Exception as err:
             logger.error(f"{err=}")
-        insert_data = (unique_id, user_id, chat_id, msg_id,
-                       msg_type, msg_ctx, mime_type, file_name, msg_js, date_time)
+        insert_data = (
+            unique_id,
+            user_id,
+            chat_id,
+            msg_id,
+            msg_type,
+            msg_ctx,
+            mime_type,
+            file_name,
+            msg_js,
+            date_time,
+        )
         execute_script = "INSERT INTO message (unique_id, user_id, chat_id, msg_id, msg_type, msg_ctx, mime_type, file_name, msg_js, date_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
         try:
             self.cur.execute(execute_script, insert_data)
@@ -175,11 +204,11 @@ class UserManager(object):
 
     def _first_runtime_run_once(self) -> None:
         if len(self.cur.execute("SELECT name FROM sqlite_master WHERE name='user'").fetchall()) == 0:
-            self.cur.execute(
-                "CREATE TABLE user(client_id primary key, username, phone, tg_user_id, last_login_time)")
+            self.cur.execute("CREATE TABLE user(client_id primary key, username, phone, tg_user_id, last_login_time)")
         if len(self.cur.execute("SELECT name FROM sqlite_master WHERE name='message'").fetchall()) == 0:
             self.cur.execute(
-                "CREATE TABLE message(unique_id varchar(64) primary key, user_id int NOT NULL, chat_id int NOT NULL, msg_id int NOT NULL, msg_type varchar(64), msg_ctx text, mime_type text, file_name text, msg_js text, date_time int NOT NULL)")
+                "CREATE TABLE message(unique_id varchar(64) primary key, user_id int NOT NULL, chat_id int NOT NULL, msg_id int NOT NULL, msg_type varchar(64), msg_ctx text, mime_type text, file_name text, msg_js text, date_time int NOT NULL)"
+            )
 
 
 if __name__ == "__main__":

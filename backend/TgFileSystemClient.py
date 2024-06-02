@@ -10,6 +10,7 @@ import logging
 from typing import Union, Optional
 
 from telethon import TelegramClient, types, hints, events
+from telethon.custom import QRLogin
 from fastapi import Request
 
 import configParse
@@ -18,6 +19,7 @@ from backend.UserManager import UserManager
 from backend.MediaCacheManager import MediaChunkHolder, MediaChunkHolderManager
 
 logger = logging.getLogger(__file__.split("/")[-1])
+
 
 class TgFileSystemClient(object):
     MAX_WORKER_ROUTINE = 4
@@ -32,6 +34,8 @@ class TgFileSystemClient(object):
     dialogs_cache: Optional[hints.TotalList] = None
     msg_cache: list[types.Message] = []
     worker_routines: list[asyncio.Task] = []
+    qr_login: QRLogin | None = None
+    login_task: asyncio.Task | None = None
     # task should: (task_id, callabledFunc)
     task_queue: asyncio.Queue
     task_id: int = 0
@@ -39,19 +43,35 @@ class TgFileSystemClient(object):
     # client config
     client_param: configParse.TgToFileSystemParameter.ClientConfigPatameter
 
-    def __init__(self, session_name: str, param: configParse.TgToFileSystemParameter, db: UserManager) -> None:
+    def __init__(
+        self,
+        session_name: str,
+        param: configParse.TgToFileSystemParameter,
+        db: UserManager,
+    ) -> None:
         self.api_id = param.tgApi.api_id
         self.api_hash = param.tgApi.api_hash
         self.session_name = session_name
-        self.proxy_param = {
-            'proxy_type': param.proxy.proxy_type,
-            'addr': param.proxy.addr,
-            'port': param.proxy.port,
-        } if param.proxy.enable else {}
-        self.client_param = next((client_param for client_param in param.clients if client_param.token == session_name), configParse.TgToFileSystemParameter.ClientConfigPatameter())
+        self.proxy_param = (
+            {
+                "proxy_type": param.proxy.proxy_type,
+                "addr": param.proxy.addr,
+                "port": param.proxy.port,
+            }
+            if param.proxy.enable
+            else {}
+        )
+        self.client_param = next(
+            (client_param for client_param in param.clients if client_param.token == session_name),
+            configParse.TgToFileSystemParameter.ClientConfigPatameter(),
+        )
         self.task_queue = asyncio.Queue()
         self.client = TelegramClient(
-            f"{os.path.dirname(__file__)}/db/{self.session_name}.session", self.api_id, self.api_hash, proxy=self.proxy_param)
+            f"{os.path.dirname(__file__)}/db/{self.session_name}.session",
+            self.api_id,
+            self.api_hash,
+            proxy=self.proxy_param,
+        )
         self.media_chunk_manager = MediaChunkHolderManager()
         self.db = db
 
@@ -72,6 +92,7 @@ class TgFileSystemClient(object):
                 raise RuntimeError("Client does not run.")
             result = func(self, *args, **kwargs)
             return result
+
         return call_check_wrapper
 
     def _acheck_before_call(func):
@@ -80,6 +101,7 @@ class TgFileSystemClient(object):
                 raise RuntimeError("Client does not run.")
             result = await func(self, *args, **kwargs)
             return result
+
         return call_check_wrapper
 
     @_check_before_call
@@ -100,6 +122,28 @@ class TgFileSystemClient(object):
             msg: types.Message = event.message
             self.db.insert_by_message(self.me, msg)
 
+    async def login(self, mode: Union["phone", "qrcode"] = "qrcode") -> str:
+        if self.is_valid():
+            return ""
+        if mode == "phone":
+            raise NotImplementedError
+        if self.qr_login is not None:
+            return self.qr_login.url
+        self.qr_login = await self.client.qr_login()
+
+        async def wait_for_qr_login():
+            try:
+                await self.qr_login.wait()
+                await self.start()
+            except Exception as err:
+                logger.warning(f"wait for login, {err=}, {traceback.format_exc()}")
+            finally:
+                self.login_task = None
+                self.qr_login = None
+
+        self.login_task = self.client.loop.create_task(wait_for_qr_login())
+        return self.qr_login.url
+
     async def start(self) -> None:
         if self.is_valid():
             return
@@ -107,11 +151,9 @@ class TgFileSystemClient(object):
             await self.client.connect()
         self.me = await self.client.get_me()
         if self.me is None:
-            raise RuntimeError(
-                f"The {self.session_name} Client Does Not Login")
+            raise RuntimeError(f"The {self.session_name} Client Does Not Login")
         for _ in range(self.MAX_WORKER_ROUTINE):
-            worker_routine = self.client.loop.create_task(
-                self._worker_routine_handler())
+            worker_routine = self.client.loop.create_task(self._worker_routine_handler())
             self.worker_routines.append(worker_routine)
         if len(self.client_param.whitelist_chat) > 0:
             self._register_update_event(from_users=self.client_param.whitelist_chat)
@@ -162,7 +204,6 @@ class TgFileSystemClient(object):
                 async for msg in self.client.iter_messages(chat_id):
                     self.db.insert_by_message(self.me, msg)
             logger.info(f"{chat_id} quit cache task.")
-            
 
     @_acheck_before_call
     async def get_message(self, chat_id: int, msg_id: int) -> types.Message:
@@ -172,9 +213,9 @@ class TgFileSystemClient(object):
     @_acheck_before_call
     async def get_dialogs(self, limit: int = 10, offset: int = 0, refresh: bool = False) -> hints.TotalList:
         if self.dialogs_cache is not None and refresh is False:
-            return self.dialogs_cache[offset:offset+limit]
+            return self.dialogs_cache[offset : offset + limit]
         self.dialogs_cache = await self.client.get_dialogs()
-        return self.dialogs_cache[offset:offset+limit]
+        return self.dialogs_cache[offset : offset + limit]
 
     async def _worker_routine_handler(self) -> None:
         while self.client.is_connected():
@@ -186,7 +227,7 @@ class TgFileSystemClient(object):
                 logger.error(traceback.format_exc())
             finally:
                 self.task_queue.task_done()
-            
+
     def _get_unique_task_id(self) -> int:
         self.task_id += 1
         return self.task_id
@@ -207,7 +248,15 @@ class TgFileSystemClient(object):
         return res_list
 
     @_acheck_before_call
-    async def get_messages_by_search(self, chat_id: int, search_word: str, limit: int = 10, offset: int = 0, inner_search: bool = False, ignore_case: bool = False) -> hints.TotalList:
+    async def get_messages_by_search(
+        self,
+        chat_id: int,
+        search_word: str,
+        limit: int = 10,
+        offset: int = 0,
+        inner_search: bool = False,
+        ignore_case: bool = False,
+    ) -> hints.TotalList:
         offset = await self._get_offset_msg_id(chat_id, offset)
         if inner_search:
             res_list = await self.client.get_messages(chat_id, limit=limit, offset_id=offset, search=search_word)
@@ -225,11 +274,26 @@ class TgFileSystemClient(object):
             if len(res_list) >= limit:
                 break
         return res_list
-    
-    async def get_messages_by_search_db(self, chat_id: int, search_word: str, limit: int = 10, offset: int = 0, inc: bool = False, ignore_case: bool = False) -> list[any]:
+
+    async def get_messages_by_search_db(
+        self,
+        chat_id: int,
+        search_word: str,
+        limit: int = 10,
+        offset: int = 0,
+        inc: bool = False,
+        ignore_case: bool = False,
+    ) -> list[any]:
         if chat_id not in self.client_param.whitelist_chat:
             return []
-        res = self.db.get_msg_by_chat_id_and_keyword(chat_id, search_word, limit=limit, offset=offset, inc=inc, ignore_case=ignore_case)
+        res = self.db.get_msg_by_chat_id_and_keyword(
+            chat_id,
+            search_word,
+            limit=limit,
+            offset=offset,
+            inc=inc,
+            ignore_case=ignore_case,
+        )
         res = [self.db.get_column_msg_js(v) for v in res]
         return res
 
@@ -243,43 +307,38 @@ class TgFileSystemClient(object):
                     chunk = chunk.tobytes()
                 remain_size -= len(chunk)
                 if remain_size <= 0:
-                    media_holder.append_chunk_mem(
-                        chunk[:len(chunk)+remain_size])
+                    media_holder.append_chunk_mem(chunk[: len(chunk) + remain_size])
                 else:
                     media_holder.append_chunk_mem(chunk)
                 if media_holder.is_completed():
                     break
                 if await media_holder.is_disconneted():
-                    raise asyncio.CancelledError("all requester canceled.") 
+                    raise asyncio.CancelledError("all requester canceled.")
         except asyncio.CancelledError as err:
             logger.info(f"cancel holder:{media_holder}")
             self.media_chunk_manager.cancel_media_chunk(media_holder)
         except Exception as err:
             logger.error(
-                f"_download_media_chunk err:{err=},{offset=},{target_size=},{media_holder},\r\n{err=}\r\n{traceback.format_exc()}")
+                f"_download_media_chunk err:{err=},{offset=},{target_size=},{media_holder},\r\n{err=}\r\n{traceback.format_exc()}"
+            )
         finally:
-            logger.debug(
-                f"downloaded chunk:{time.time()}.{offset=},{target_size=},{media_holder}")
+            logger.debug(f"downloaded chunk:{time.time()}.{offset=},{target_size=},{media_holder}")
 
     async def streaming_get_iter(self, msg: types.Message, start: int, end: int, req: Request):
         try:
-            logger.debug(
-                f"new steaming request:{msg.chat_id=},{msg.id=},[{start}:{end}]")
+            logger.debug(f"new steaming request:{msg.chat_id=},{msg.id=},[{start}:{end}]")
             cur_task_id = self._get_unique_task_id()
             pos = start
             while not await req.is_disconnected() and pos <= end:
-                cache_chunk = self.media_chunk_manager.get_media_chunk(
-                    msg, pos)
+                cache_chunk = self.media_chunk_manager.get_media_chunk(msg, pos)
                 if cache_chunk is None:
                     # post download task
                     # align pos download task
                     file_size = msg.media.document.size
                     # align_pos = pos // self.SINGLE_MEDIA_SIZE * self.SINGLE_MEDIA_SIZE
                     align_pos = pos
-                    align_size = min(self.SINGLE_MEDIA_SIZE,
-                                     file_size - align_pos)
-                    holder = MediaChunkHolder(
-                        msg.chat_id, msg.id, align_pos, align_size)
+                    align_size = min(self.SINGLE_MEDIA_SIZE, file_size - align_pos)
+                    holder = MediaChunkHolder(msg.chat_id, msg.id, align_pos, align_size)
                     holder.add_chunk_requester(req)
                     self.media_chunk_manager.set_media_chunk(holder)
                     self.task_queue.put_nowait((cur_task_id, self._download_media_chunk(msg, holder)))
@@ -294,28 +353,28 @@ class TgFileSystemClient(object):
                         if offset >= cache_chunk.length:
                             await cache_chunk.wait_chunk_update()
                             continue
-                        need_len = min(cache_chunk.length -
-                                       offset, end - pos + 1)
+                        need_len = min(cache_chunk.length - offset, end - pos + 1)
                         pos = pos + need_len
-                        yield cache_chunk.mem[offset:offset+need_len]
+                        yield cache_chunk.mem[offset : offset + need_len]
                 else:
                     offset = pos - cache_chunk.start
                     if offset >= cache_chunk.length:
-                        raise RuntimeError(
-                            f"lru cache missed!{pos=},{cache_chunk=}")
+                        raise RuntimeError(f"lru cache missed!{pos=},{cache_chunk=}")
                     need_len = min(cache_chunk.length - offset, end - pos + 1)
                     pos = pos + need_len
-                    yield cache_chunk.mem[offset:offset+need_len]
+                    yield cache_chunk.mem[offset : offset + need_len]
         except Exception as err:
             logger.error(f"stream iter:{err=}")
             logger.error(traceback.format_exc())
         finally:
+
             async def _cancel_task_by_id(task_id: int):
                 for _ in range(self.task_queue.qsize()):
                     task = self.task_queue.get_nowait()
                     self.task_queue.task_done()
                     if task[0] != task_id:
                         self.task_queue.put_nowait(task)
+
             await self.client.loop.create_task(_cancel_task_by_id(cur_task_id))
             logger.debug(f"yield quit,{msg.chat_id=},{msg.id=},[{start}:{end}]")
 

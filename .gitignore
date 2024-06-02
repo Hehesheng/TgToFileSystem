@@ -1,13 +1,15 @@
 __pycache__
 .venv
+.idea
 .vscode
 *.session
 *.session-journal
+*-journal
 *.session.sql
 *.toml
 *.db
 *.service
 log
-cacheTest
+cache_media
 tmp
 logs

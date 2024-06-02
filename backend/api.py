@@ -185,10 +185,16 @@ async def get_tg_file_media(chat_id: int|str, msg_id: int, file_name: str, sign:
         return Response(json.dumps({"detail": f"{err=}"}), status_code=status.HTTP_404_NOT_FOUND)
 
 
-@app.post("/tg/api/v1/client/login")
+@app.get("/tg/api/v1/client/login")
 @apiutils.atimeit
 async def login_new_tg_file_client():
-    raise NotImplementedError
+    url = await clients_mgr.login_clients()
+    return {"url": url}
+
+
+@app.get("/tg/api/v1/client/status")
+async def get_tg_file_client_status(request: Request):
+    return await clients_mgr.get_status()
 
 
 @app.get("/tg/api/v1/client/link_convert")

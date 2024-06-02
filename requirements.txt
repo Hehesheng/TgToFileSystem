@@ -1,6 +1,7 @@
 toml
 telethon
 # python-socks[asyncio]
+diskcache
 fastapi
 uvicorn[standard]
 streamlit
