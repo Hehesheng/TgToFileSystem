@@ -238,6 +238,7 @@ class MediaChunkHolderManager(object):
             if cache_holder is None:
                 logger.warning(f"the holder not in mem, {holder}")
                 return
+            logger.info(f"cache new chunk:{holder}")
             self.disk_chunk_cache.set(holder.chunk_id, holder)
 
         return MediaChunkHolder(chat_id, msg_id, start, target_len, callback=holder_completed_callback)
