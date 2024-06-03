@@ -60,7 +60,7 @@ class MediaChunkHolder(object):
         self.callback = callback
 
     def __repr__(self) -> str:
-        return f"MediaChunk,{self.info},len:{self.length}"
+        return f"MediaChunk,{self.info},unique_id:{self.unique_id}"
 
     def __eq__(self, other: Union["MediaChunkHolder", ChunkInfo, int]):
         if isinstance(other, int):
@@ -143,14 +143,13 @@ class MediaChunkHolder(object):
         self.callback = None
         callback(self)
 
-    def can_store_in_disk(self) -> bool:
+    def try_clear_waiter_and_requester(self) -> bool:
         if not self.is_completed():
-            return False
-        if not self.is_disconneted():
             return False
         # clear all waiter and requester
         self.notify_waiters()
-        return True
+        self.requester.clear()
+        return True 
 
 
 class MediaChunkHolderManager(object):
@@ -264,8 +263,7 @@ class MediaChunkHolderManager(object):
         self.current_cache_size += info.length
 
     def set_media_chunk(self, chunk: MediaChunkHolder) -> None:
-        can_store = chunk.can_store_in_disk()
-        if can_store:
+        if chunk.is_completed():
             self.disk_chunk_cache.set(chunk.chunk_id, chunk)
         else:
             self.incompleted_chunk[chunk.chunk_id] = chunk

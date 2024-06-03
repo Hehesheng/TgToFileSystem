@@ -315,6 +315,8 @@ class TgFileSystemClient(object):
                 else:
                     media_holder.append_chunk_mem(chunk)
                 if media_holder.is_completed():
+                    if not media_holder.try_clear_waiter_and_requester():
+                        logger.error("I think never run here.")
                     media_holder.set_done()
                     break
                 if await media_holder.is_disconneted():
