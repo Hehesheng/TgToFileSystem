@@ -86,6 +86,11 @@ class TgFileSystemClientManager(object):
         client = self.clients.get(client_id)
         return client
 
+    def get_first_client(self) -> TgFileSystemClient:
+        for client in self.clients.values():
+            return client
+        return None
+
     async def get_client_force(self, client_id: str) -> TgFileSystemClient:
         client = self.get_client(client_id)
         if client is None:

@@ -37,6 +37,7 @@ class TgFileSystemClient(object):
     qr_login: QRLogin | None = None
     login_task: asyncio.Task | None = None
     # rsa key
+    sign: str
     public_key: rsa.PublicKey
     private_key: rsa.PrivateKey
     # task should: (task_id, callabledFunc)
@@ -69,6 +70,7 @@ class TgFileSystemClient(object):
             (client_param for client_param in param.clients if client_param.token == session_name),
             configParse.TgToFileSystemParameter.ClientConfigPatameter(),
         )
+        self.sign = self.client_param.token
         self.task_queue = asyncio.Queue()
         self.client = TelegramClient(
             f"{os.path.dirname(__file__)}/db/{self.session_name}.session",
@@ -210,7 +212,7 @@ class TgFileSystemClient(object):
             logger.info(f"{chat_id} quit cache task.")
 
     @_acheck_before_call
-    async def get_message(self, chat_id: int, msg_id: int) -> types.Message:
+    async def get_message(self, chat_id: int | str, msg_id: int) -> types.Message:
         msg = await self.client.get_messages(chat_id, ids=msg_id)
         return msg
 
@@ -244,6 +246,10 @@ class TgFileSystemClient(object):
             first_id = begin[0].id
             offset = first_id + offset
         return offset
+
+    @_acheck_before_call
+    async def get_entity(self, chat_id_or_name) -> hints.Entity:
+        return await self.client.get_entity(chat_id_or_name)
 
     @_acheck_before_call
     async def get_messages(self, chat_id: int, limit: int = 10, offset: int = 0) -> hints.TotalList:

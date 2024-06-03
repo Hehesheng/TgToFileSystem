@@ -9,7 +9,7 @@ from fastapi import FastAPI, status, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
 from contextlib import asynccontextmanager
-from telethon import types, hints
+from telethon import types, hints, utils
 from pydantic import BaseModel
 
 import configParse
@@ -199,8 +199,32 @@ async def get_tg_file_client_status(request: Request):
 
 @app.get("/tg/api/v1/client/link_convert")
 @apiutils.atimeit
-async def convert_tg_msg_link_media_stream(link: str, sign: str):
-    raise NotImplementedError
+async def convert_tg_msg_link_media_stream(link: str):
+    try:
+        link_slice = link.split("/")
+        if len(link_slice) < 5:
+            raise RuntimeError("link format invalid")
+        chat_id_or_name, msg_id = link_slice[-2:]
+        is_msg_id = msg_id.isascii() and msg_id.isdecimal()
+        if not is_msg_id:
+            raise RuntimeError("message id invalid")
+        msg_id = int(msg_id)
+        is_chat_name = chat_id_or_name.isascii() and not chat_id_or_name.isdecimal()
+        is_chat_id = chat_id_or_name.isascii() and chat_id_or_name.isdecimal()
+        if not is_chat_name and not is_chat_id:
+            raise RuntimeError("chat id invalid")
+        client = clients_mgr.get_first_client()
+        if client is None:
+            raise RuntimeError("client not ready, login first pls.")
+        if is_chat_id:
+            chat_id_or_name = int(chat_id_or_name)
+        msg = await client.get_message(chat_id_or_name, msg_id)
+        file_name = apiutils.get_message_media_name(msg)
+        url = f"{param.base.exposed_url}/tg/api/v1/file/get/{utils.get_peer_id(msg.peer_id)}/{msg.id}/{file_name}?sign={client.sign}"
+        return Response(json.dumps({"url": url}), status_code=status.HTTP_200_OK)
+    except Exception as err:
+        logger.error(f"{err=}")
+        return Response(json.dumps({"detail": "link invalid", "err": f"{err}"}), status_code=status.HTTP_404_NOT_FOUND)
 
 
 @app.get("/tg/api/v1/client/profile_photo")

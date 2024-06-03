@@ -167,7 +167,7 @@ class MediaChunkHolderManager(object):
     def __init__(self) -> None:
         self.chunk_lru = collections.OrderedDict()
         self.disk_chunk_cache = diskcache.Cache(
-            f"{os.path.dirname(__file__)}/cache_media", size_limit=MediaChunkHolderManager.MAX_CACHE_SIZE
+            f"{os.path.dirname(__file__)}/cache_media", size_limit=MediaChunkHolderManager.MAX_CACHE_SIZE * 2
         )
         self._restore_cache()
 
