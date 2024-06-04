@@ -22,8 +22,8 @@ logger = logging.getLogger(__file__.split("/")[-1])
 
 
 class TgFileSystemClient(object):
-    MAX_WORKER_ROUTINE = 4
-    SINGLE_NET_CHUNK_SIZE = 512 * 1024  # 512kb
+    MAX_WORKER_ROUTINE = 8
+    SINGLE_NET_CHUNK_SIZE = 256 * 1024  # 256kb
     SINGLE_MEDIA_SIZE = 5 * 1024 * 1024  # 5mb
     api_id: int
     api_hash: str

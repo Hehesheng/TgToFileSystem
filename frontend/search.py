@@ -35,7 +35,7 @@ def loop():
 
     search_clicked = st.button('Search', type='primary', use_container_width=True)
     if not st.session_state.force_skip and (not search_clicked or st.query_params.search_key == "" or st.query_params.search_key is None):
-        st.stop()
+        return
 
     if not st.session_state.force_skip:
         st.session_state.page_index = 1
@@ -50,7 +50,7 @@ def loop():
 
         search_res = api.search_database_by_keyword(st.query_params.search_key, offset_index, search_limit, is_order)
         if search_res is None:
-            st.stop()
+            return
 
         def page_switch_render():
             columns = st.columns(3)
@@ -82,11 +82,15 @@ def loop():
 
             expender_title = f"{(msg_ctx if len(msg_ctx) < 103 else msg_ctx[:100] + '...')} &mdash; *{file_size_str}*"
             popover = container_columns[1].popover(expender_title, use_container_width=True)
+            # media_file_popover_container(popover, url, msg_ctx, file_name, file_size_str, src_link)
             popover_columns = popover.columns([1, 3, 1])
-            if url:
-                popover_columns[0].video(url)
-            else:
-                popover_columns[0].video('./static/404.webm', format="video/webm")
+            video_holder = popover_columns[0].empty()
+            if video_holder.button("Preview", key=f"videoBtn{url}", use_container_width=True):
+                video_holder.empty()
+                if url:
+                    video_holder.video(url)
+                else:
+                    video_holder.video('./static/404.webm', format="video/webm")
             popover_columns[1].markdown(f'{msg_ctx}')
             popover_columns[1].markdown(f'**{file_name}**')
             popover_columns[1].markdown(f'文件大小：*{file_size_str}*')
@@ -99,7 +103,7 @@ def loop():
             if search_res_list is None or len(search_res_list) == 0:
                 st.info("No result")
                 page_switch_render()
-                st.stop()
+                return
             sign_token = ""
             try:
                 sign_token = res['client']['sign']

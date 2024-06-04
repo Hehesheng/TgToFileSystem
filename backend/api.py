@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import logging
+import traceback
 from urllib.parse import quote
 
 import uvicorn
@@ -82,7 +83,7 @@ async def search_tg_file_list(body: TgToFileListRequestBody):
         }
         return Response(json.dumps(response_dict), status_code=status.HTTP_200_OK)
     except Exception as err:
-        logger.error(f"{err=}")
+        logger.error(f"{err=},{traceback.format_exc()}")
         return Response(json.dumps({"detail": f"{err=}"}), status_code=status.HTTP_404_NOT_FOUND)
 
 
@@ -116,7 +117,7 @@ async def get_tg_file_list(body: TgToFileListRequestBody):
         }
         return Response(json.dumps(response_dict), status_code=status.HTTP_200_OK)
     except Exception as err:
-        logger.error(f"{err=}")
+        logger.error(f"{err=},{traceback.format_exc()}")
         return Response(json.dumps({"detail": f"{err=}"}), status_code=status.HTTP_404_NOT_FOUND)
 
 
@@ -169,7 +170,7 @@ async def get_tg_file_media_stream(token: str, cid: int, mid: int, request: Requ
             status_code=status_code,
         )
     except Exception as err:
-        logger.error(f"{err=}")
+        logger.error(f"{err=},{traceback.format_exc()}")
         return Response(json.dumps({"detail": f"{err=}"}), status_code=status.HTTP_404_NOT_FOUND)
 
 
@@ -181,7 +182,7 @@ async def get_tg_file_media(chat_id: int|str, msg_id: int, file_name: str, sign:
             chat_id = int(chat_id)
         return await get_tg_file_media_stream(sign, chat_id, msg_id, req)
     except Exception as err:
-        logger.error(f"{err=}")
+        logger.error(f"{err=},{traceback.format_exc()}")
         return Response(json.dumps({"detail": f"{err=}"}), status_code=status.HTTP_404_NOT_FOUND)
 
 
@@ -220,10 +221,12 @@ async def convert_tg_msg_link_media_stream(link: str):
             chat_id_or_name = int(chat_id_or_name)
         msg = await client.get_message(chat_id_or_name, msg_id)
         file_name = apiutils.get_message_media_name(msg)
+        param = configParse.get_TgToFileSystemParameter()
         url = f"{param.base.exposed_url}/tg/api/v1/file/get/{utils.get_peer_id(msg.peer_id)}/{msg.id}/{file_name}?sign={client.sign}"
+        logger.info(f"{link}: link convert to: {url}")
         return Response(json.dumps({"url": url}), status_code=status.HTTP_200_OK)
     except Exception as err:
-        logger.error(f"{err=}")
+        logger.error(f"{err=},{traceback.format_exc()}")
         return Response(json.dumps({"detail": "link invalid", "err": f"{err}"}), status_code=status.HTTP_404_NOT_FOUND)
 
 

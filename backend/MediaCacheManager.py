@@ -153,7 +153,7 @@ class MediaChunkHolder(object):
 
 
 class MediaChunkHolderManager(object):
-    MAX_CACHE_SIZE = 2**32  # 4GB
+    MAX_CACHE_SIZE = 2**31  # 2GB
     current_cache_size: int = 0
     # chunk unique id -> ChunkHolder
     disk_chunk_cache: diskcache.Cache
