@@ -20,7 +20,7 @@ LOGGING_CONFIG["formatters"]["access"]["fmt"] = '[%(levelname)s] %(asctime)s [uv
 LOGGING_CONFIG["handlers"]["timed_rotating_api_file"] = {
     "class": "logging.handlers.TimedRotatingFileHandler",
     "filename": "logs/app.log",
-    "when": "midnight",
+    "when": "D",
     "interval": 1,
     "backupCount": 7,
     "level": "INFO",
@@ -29,10 +29,6 @@ LOGGING_CONFIG["handlers"]["timed_rotating_api_file"] = {
 }
 LOGGING_CONFIG["loggers"]["uvicorn"]["handlers"].append("timed_rotating_api_file")
 LOGGING_CONFIG["loggers"]["uvicorn.access"]["handlers"].append("timed_rotating_api_file")
-
-for handler in logging.getLogger().handlers:
-    if isinstance(handler, logging.handlers.TimedRotatingFileHandler):
-        handler.suffix = "%Y-%m-%d"
 
 logger = logging.getLogger(__file__.split("/")[-1])
 

@@ -42,7 +42,7 @@ class ChunkInfo(object):
 @functools.total_ordering
 class MediaChunkHolder(object):
     waiters: collections.deque[asyncio.Future]
-    requester: list[Request] = []
+    requesters: list[Request] = []
     unique_id: str = ""
     info: ChunkInfo
     callback: Callable = None
@@ -108,15 +108,15 @@ class MediaChunkHolder(object):
     def add_chunk_requester(self, req: Request) -> None:
         if self.is_completed():
             return
-        self.requester.append(req)
+        self.requesters.append(req)
 
     async def is_disconneted(self) -> bool:
-        while self.requester:
-            req = self.requester[0]
+        while self.requesters:
+            req = self.requesters[0]
             if not await req.is_disconnected():
                 return False
             try:
-                self.requester.remove(req)
+                self.requesters.remove(req)
             except Exception as err:
                 logger.warning(f"{err=}, trace:{traceback.format_exc()}")
                 return False
@@ -148,7 +148,7 @@ class MediaChunkHolder(object):
             return False
         # clear all waiter and requester
         self.notify_waiters()
-        self.requester.clear()
+        self.requesters.clear()
         return True 
 
 

@@ -11,7 +11,7 @@ handlers:
   timed_rotating_file:
     class: logging.handlers.TimedRotatingFileHandler
     filename: logs/app.log
-    when: midnight
+    when: 'D'
     interval: 1
     backupCount: 7
     level: INFO
