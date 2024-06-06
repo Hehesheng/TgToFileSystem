@@ -50,7 +50,8 @@ class UserManager(object):
     def update_message(self) -> None:
         raise NotImplementedError
 
-    def generate_unique_id_by_msg(self, me: types.User, msg: types.Message) -> str:
+    @staticmethod
+    def generate_unique_id_by_msg(me: types.User, msg: types.Message) -> str:
         user_id = me.id
         chat_id = msg.chat_id
         msg_id = msg.id

@@ -7,7 +7,7 @@ import os
 import functools
 import traceback
 import logging
-from typing import Union, Optional
+from typing import Union, Optional, Literal
 
 from telethon import TelegramClient, types, hints, events
 from telethon.custom import QRLogin
@@ -128,7 +128,7 @@ class TgFileSystemClient(object):
             msg: types.Message = event.message
             self.db.insert_by_message(self.me, msg)
 
-    async def login(self, mode: Union["phone", "qrcode"] = "qrcode") -> str:
+    async def login(self, mode: Literal["phone", "qrcode"] = "qrcode") -> str:
         if self.is_valid():
             return ""
         if mode == "phone":
@@ -184,7 +184,7 @@ class TgFileSystemClient(object):
     async def _cache_whitelist_chat2(self):
         for chat_id in self.client_param.whitelist_chat:
             async for msg in self.client.iter_messages(chat_id):
-                if len(self.db.get_msg_by_unique_id(self.db.generate_unique_id_by_msg(self.me, msg))) != 0:
+                if len(self.db.get_msg_by_unique_id(UserManager.generate_unique_id_by_msg(self.me, msg))) != 0:
                     continue
                 self.db.insert_by_message(self.me, msg)
             logger.info(f"{chat_id} quit cache task.")
