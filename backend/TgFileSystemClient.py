@@ -308,6 +308,7 @@ class TgFileSystemClient(object):
         return res
 
     async def _download_media_chunk(self, msg: types.Message, media_holder: MediaChunkHolder) -> None:
+        logger.info(f"start downloading new chunk:{media_holder=}")
         try:
             offset = media_holder.start + media_holder.length
             target_size = media_holder.target_len - media_holder.length
@@ -321,9 +322,6 @@ class TgFileSystemClient(object):
                 else:
                     media_holder.append_chunk_mem(chunk)
                 if media_holder.is_completed():
-                    if not media_holder.try_clear_waiter_and_requester():
-                        logger.error("I think never run here.")
-                    media_holder.set_done()
                     break
                 if await media_holder.is_disconneted():
                     raise asyncio.CancelledError("all requester canceled.")
@@ -334,8 +332,13 @@ class TgFileSystemClient(object):
             logger.error(
                 f"_download_media_chunk err:{err=},{offset=},{target_size=},{media_holder},\r\n{err=}\r\n{traceback.format_exc()}"
             )
+        else:
+            if not media_holder.try_clear_waiter_and_requester():
+                logger.error("I think never run here.")
+            media_holder.set_done()
+            logger.debug(f"downloaded chunk:{offset=},{target_size=},{media_holder}")
         finally:
-            logger.debug(f"downloaded chunk:{time.time()}.{offset=},{target_size=},{media_holder}")
+            pass
 
     async def streaming_get_iter(self, msg: types.Message, start: int, end: int, req: Request):
         try:

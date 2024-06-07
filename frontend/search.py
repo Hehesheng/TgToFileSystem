@@ -71,6 +71,8 @@ def loop():
                     st.session_state.page_index = st.session_state.page_index + 1
                     st.session_state.force_skip = True
                     st.rerun()
+            st.session_state.page_index = st.number_input(
+                "page_index", key="page_index_input", min_value=1, max_value=100, value=st.session_state.page_index, format="%d", label_visibility="hidden")
 
         def media_file_res_container(index: int, msg_ctx: str, file_name: str, file_size: int, url: str, src_link: str):
             file_size_str = f"{file_size/1024/1024:.2f}MB"
