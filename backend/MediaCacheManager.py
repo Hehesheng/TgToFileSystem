@@ -42,8 +42,8 @@ class ChunkInfo(object):
 @functools.total_ordering
 class MediaChunkHolder(object):
     waiters: collections.deque[asyncio.Future]
-    requesters: list[Request] = []
-    unique_id: str = ""
+    requesters: list[Request]
+    unique_id: str
     info: ChunkInfo
 
     @staticmethod
@@ -56,9 +56,11 @@ class MediaChunkHolder(object):
         self.mem = bytes()
         self.length = len(self.mem)
         self.waiters = collections.deque()
+        self.requesters = []
 
     def __repr__(self) -> str:
-        return f"MediaChunk,unique_id:{self.unique_id},{self.info},mlen:{self.length}"
+        pl = [f"{id(req)}" for req in self.requesters]
+        return f"MediaChunk,unique_id:{self.unique_id},{self.info},mlen:{self.length},req:{pl}"
 
     def __eq__(self, other: Union["MediaChunkHolder", ChunkInfo, int]):
         if isinstance(other, int):
@@ -110,11 +112,12 @@ class MediaChunkHolder(object):
 
     async def is_disconneted(self) -> bool:
         while self.requesters:
-            req = self.requesters[0]
-            if not await req.is_disconnected():
-                return False
             try:
+                req = self.requesters[0]
+                if not await req.is_disconnected():
+                    return False
                 self.requesters.remove(req)
+                logger.info(f"remove req:{id(req)=},{self}")
             except Exception as err:
                 logger.warning(f"{err=}, trace:{traceback.format_exc()}")
                 return False
@@ -127,9 +130,9 @@ class MediaChunkHolder(object):
         self.waiters.append(waiter)
         try:
             await waiter
-        except:
+        except Exception as err:
             waiter.cancel()
-            logger.warning("waiter cancel")
+            logger.warning(f"waiter cancel:{err=},{traceback.format_exc()}")
             try:
                 self.waiters.remove(waiter)
             except ValueError:

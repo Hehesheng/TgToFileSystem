@@ -356,6 +356,7 @@ class TgFileSystemClient(object):
                     align_pos = pos
                     align_size = min(self.SINGLE_MEDIA_SIZE, file_size - align_pos)
                     holder = self.media_chunk_manager.create_media_chunk_holder(msg.chat_id, msg.id, align_pos, align_size)
+                    logger.info(f"new holder create:{holder}")
                     holder.add_chunk_requester(req)
                     self.media_chunk_manager.set_media_chunk(holder)
                     self.task_queue.put_nowait((cur_task_id, self._download_media_chunk(msg, holder)))

@@ -177,7 +177,6 @@ async def get_tg_file_media_stream(token: str, cid: int, mid: int, request: Requ
 @app.get("/tg/api/v1/file/get/{chat_id}/{msg_id}/{file_name}")
 @apiutils.atimeit
 async def get_tg_file_media(chat_id: int|str, msg_id: int, file_name: str, sign: str, req: Request):
-    logger.info(f"request: {chat_id=},{msg_id=},{file_name=},{req=},{id(req)=}")
     try:
         if isinstance(chat_id, str):
             chat_id = int(chat_id)
