@@ -58,7 +58,7 @@ class MediaChunkHolder(object):
         self.waiters = collections.deque()
 
     def __repr__(self) -> str:
-        return f"MediaChunk,{self.info},unique_id:{self.unique_id}"
+        return f"MediaChunk,unique_id:{self.unique_id},{self.info},mlen:{self.length}"
 
     def __eq__(self, other: Union["MediaChunkHolder", ChunkInfo, int]):
         if isinstance(other, int):
