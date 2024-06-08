@@ -129,6 +129,7 @@ class MediaChunkHolder(object):
             await waiter
         except:
             waiter.cancel()
+            logger.warning("waiter cancel")
             try:
                 self.waiters.remove(waiter)
             except ValueError:

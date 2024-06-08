@@ -177,6 +177,7 @@ async def get_tg_file_media_stream(token: str, cid: int, mid: int, request: Requ
 @app.get("/tg/api/v1/file/get/{chat_id}/{msg_id}/{file_name}")
 @apiutils.atimeit
 async def get_tg_file_media(chat_id: int|str, msg_id: int, file_name: str, sign: str, req: Request):
+    logger.info(f"request: {chat_id=},{msg_id=},{file_name=},{req=},{id(req)=}")
     try:
         if isinstance(chat_id, str):
             chat_id = int(chat_id)
@@ -195,9 +196,8 @@ async def login_new_tg_file_client():
 
 
 @app.get("/tg/api/v1/client/status")
-async def get_tg_file_client_status(request: Request):
-    clients_mgr = TgFileSystemClientManager.get_instance()
-    return await clients_mgr.get_status()
+async def get_tg_file_client_status(flag: bool = False, request: Request = None):
+    return await api.get_clients_manager_status(flag)
 
 
 @app.get("/tg/api/v1/client/link_convert")

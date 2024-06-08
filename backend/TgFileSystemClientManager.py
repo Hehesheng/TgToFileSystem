@@ -15,7 +15,7 @@ logger = logging.getLogger(__file__.split("/")[-1])
 
 class TgFileSystemClientManager(object):
     MAX_MANAGE_CLIENTS: int = 10
-    is_init: asyncio.Future
+    is_init: bool = False
     param: configParse.TgToFileSystemParameter
     clients: dict[str, TgFileSystemClient] = {}
 
@@ -28,7 +28,6 @@ class TgFileSystemClientManager(object):
     def __init__(self, param: configParse.TgToFileSystemParameter) -> None:
         self.param = param
         self.db = UserManager()
-        self.is_init = asyncio.Future()
         self.loop = asyncio.get_running_loop()
         if self.loop.is_running():
             self.loop.create_task(self._start_clients())
@@ -49,7 +48,7 @@ class TgFileSystemClientManager(object):
                     await client.start()
             except Exception as err:
                 logger.warning(f"start client: {err=}, {traceback.format_exc()}")
-        self.is_init.set_result(True)
+        self.is_init = True
 
     async def get_status(self) -> dict[str, any]:
         clients_status = [
@@ -58,7 +57,7 @@ class TgFileSystemClientManager(object):
             }
             for _, client in self.clients.items()
         ]
-        return {"init": await self.is_init, "clients": clients_status}
+        return {"init": self.is_init, "clients": clients_status}
 
     async def login_clients(self) -> str:
         for _, client in self.clients.items():

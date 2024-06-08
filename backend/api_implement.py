@@ -1,4 +1,5 @@
 import traceback
+import json
 import logging
 
 from telethon import types, hints, utils
@@ -37,3 +38,18 @@ async def link_convert(link: str) -> str:
         f"{param.base.exposed_url}/tg/api/v1/file/get/{utils.get_peer_id(msg.peer_id)}/{msg.id}/{file_name}?sign={client.sign}"
     )
     return url
+
+
+async def get_clients_manager_status(detail) -> dict[str, any]:
+    clients_mgr = TgFileSystemClientManager.get_instance()
+    ret = await clients_mgr.get_status()
+    if not detail:
+        return ret
+    chat_details = {}
+    for _, client in clients_mgr.clients.items():
+        chat_list = client.client_param.whitelist_chat
+        for chat_id in chat_list:
+            chat_entity = await client.get_entity(chat_id)
+            chat_details[chat_id] = json.loads(chat_entity.to_json())
+    ret["info"] = chat_details
+    return ret
