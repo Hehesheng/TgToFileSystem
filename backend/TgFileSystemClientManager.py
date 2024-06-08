@@ -19,6 +19,12 @@ class TgFileSystemClientManager(object):
     param: configParse.TgToFileSystemParameter
     clients: dict[str, TgFileSystemClient] = {}
 
+    @classmethod
+    def get_instance(cls):
+        if not hasattr(TgFileSystemClientManager, "_instance"):
+            TgFileSystemClientManager._instance = TgFileSystemClientManager(configParse.get_TgToFileSystemParameter())
+        return TgFileSystemClientManager._instance
+
     def __init__(self, param: configParse.TgToFileSystemParameter) -> None:
         self.param = param
         self.db = UserManager()

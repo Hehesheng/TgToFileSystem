@@ -335,7 +335,8 @@ class TgFileSystemClient(object):
         else:
             if not media_holder.try_clear_waiter_and_requester():
                 logger.error("I think never run here.")
-            media_holder.set_done()
+            if not self.media_chunk_manager.move_media_chunk_to_disk(media_holder):
+                logger.warning(f"move to disk failed, {media_holder=}")
             logger.debug(f"downloaded chunk:{offset=},{target_size=},{media_holder}")
         finally:
             pass

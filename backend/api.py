@@ -15,22 +15,19 @@ from pydantic import BaseModel
 
 import configParse
 from backend import apiutils
+from backend import api_implement as api
 from backend.TgFileSystemClientManager import TgFileSystemClientManager
 
 logger = logging.getLogger(__file__.split("/")[-1])
 
-clients_mgr: TgFileSystemClientManager = None
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    for handler in logging.getLogger().handlers:
-        if isinstance(handler, logging.handlers.TimedRotatingFileHandler):
-            handler.suffix = "%Y-%m-%d"
-    global clients_mgr
-    param = configParse.get_TgToFileSystemParameter()
-    clients_mgr = TgFileSystemClientManager(param)
+    clients_mgr = TgFileSystemClientManager.get_instance()
+    res = await clients_mgr.get_status()
+    logger.info(f"init clients manager:{res}")
     yield
+
 
 app = FastAPI(lifespan=lifespan)
 
@@ -57,6 +54,7 @@ class TgToFileListRequestBody(BaseModel):
 async def search_tg_file_list(body: TgToFileListRequestBody):
     try:
         param = configParse.get_TgToFileSystemParameter()
+        clients_mgr = TgFileSystemClientManager.get_instance()
         res = hints.TotalList()
         res_type = "msg"
         client = await clients_mgr.get_client_force(body.token)
@@ -91,6 +89,7 @@ async def search_tg_file_list(body: TgToFileListRequestBody):
 @apiutils.atimeit
 async def get_tg_file_list(body: TgToFileListRequestBody):
     try:
+        clients_mgr = TgFileSystemClientManager.get_instance()
         res = hints.TotalList()
         res_type = "chat"
         client = await clients_mgr.get_client_force(body.token)
@@ -138,6 +137,7 @@ async def get_tg_file_media_stream(token: str, cid: int, mid: int, request: Requ
     }
     range_header = request.headers.get("range")
     try:
+        clients_mgr = TgFileSystemClientManager.get_instance()
         client = await clients_mgr.get_client_force(token)
         msg = await client.get_message(chat_id, msg_id)
         file_size = msg.media.document.size
@@ -189,12 +189,14 @@ async def get_tg_file_media(chat_id: int|str, msg_id: int, file_name: str, sign:
 @app.get("/tg/api/v1/client/login")
 @apiutils.atimeit
 async def login_new_tg_file_client():
+    clients_mgr = TgFileSystemClientManager.get_instance()
     url = await clients_mgr.login_clients()
     return {"url": url}
 
 
 @app.get("/tg/api/v1/client/status")
 async def get_tg_file_client_status(request: Request):
+    clients_mgr = TgFileSystemClientManager.get_instance()
     return await clients_mgr.get_status()
 
 
@@ -202,27 +204,7 @@ async def get_tg_file_client_status(request: Request):
 @apiutils.atimeit
 async def convert_tg_msg_link_media_stream(link: str):
     try:
-        link_slice = link.split("/")
-        if len(link_slice) < 5:
-            raise RuntimeError("link format invalid")
-        chat_id_or_name, msg_id = link_slice[-2:]
-        is_msg_id = msg_id.isascii() and msg_id.isdecimal()
-        if not is_msg_id:
-            raise RuntimeError("message id invalid")
-        msg_id = int(msg_id)
-        is_chat_name = chat_id_or_name.isascii() and not chat_id_or_name.isdecimal()
-        is_chat_id = chat_id_or_name.isascii() and chat_id_or_name.isdecimal()
-        if not is_chat_name and not is_chat_id:
-            raise RuntimeError("chat id invalid")
-        client = clients_mgr.get_first_client()
-        if client is None:
-            raise RuntimeError("client not ready, login first pls.")
-        if is_chat_id:
-            chat_id_or_name = int(chat_id_or_name)
-        msg = await client.get_message(chat_id_or_name, msg_id)
-        file_name = apiutils.get_message_media_name(msg)
-        param = configParse.get_TgToFileSystemParameter()
-        url = f"{param.base.exposed_url}/tg/api/v1/file/get/{utils.get_peer_id(msg.peer_id)}/{msg.id}/{file_name}?sign={client.sign}"
+        url = await api.link_convert(link)
         logger.info(f"{link}: link convert to: {url}")
         return Response(json.dumps({"url": url}), status_code=status.HTTP_200_OK)
     except Exception as err:
@@ -247,6 +229,7 @@ class TgToChatListRequestBody(BaseModel):
 @apiutils.atimeit
 async def get_tg_client_chat_list(body: TgToChatListRequestBody, request: Request):
     try:
+        clients_mgr = TgFileSystemClientManager.get_instance()
         res = hints.TotalList()
         res_type = "chat"
         client = await clients_mgr.get_client_force(body.token)

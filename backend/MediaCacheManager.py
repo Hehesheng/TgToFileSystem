@@ -7,7 +7,7 @@ import asyncio
 import traceback
 import hashlib
 import collections
-from typing import Union, Optional, Callable
+from typing import Union, Optional
 
 import diskcache
 from fastapi import Request
@@ -45,19 +45,17 @@ class MediaChunkHolder(object):
     requesters: list[Request] = []
     unique_id: str = ""
     info: ChunkInfo
-    callback: Callable = None
 
     @staticmethod
     def generate_id(chat_id: int, msg_id: int, start: int) -> str:
         return f"{chat_id}:{msg_id}:{start}"
 
-    def __init__(self, chat_id: int, msg_id: int, start: int, target_len: int, callback: Callable = None) -> None:
+    def __init__(self, chat_id: int, msg_id: int, start: int, target_len: int) -> None:
         self.unique_id = MediaChunkHolder.generate_id(chat_id, msg_id, start)
         self.info = ChunkInfo(hashlib.md5(self.unique_id.encode()).hexdigest(), chat_id, msg_id, start, target_len)
         self.mem = bytes()
         self.length = len(self.mem)
         self.waiters = collections.deque()
-        self.callback = callback
 
     def __repr__(self) -> str:
         return f"MediaChunk,{self.info},unique_id:{self.unique_id}"
@@ -135,13 +133,6 @@ class MediaChunkHolder(object):
                 self.waiters.remove(waiter)
             except ValueError:
                 pass
-
-    def set_done(self) -> None:
-        if self.callback is None:
-            return
-        callback = self.callback
-        self.callback = None
-        callback(self)
 
     def try_clear_waiter_and_requester(self) -> bool:
         if not self.is_completed():
@@ -236,15 +227,7 @@ class MediaChunkHolderManager(object):
             logger.warning(f"remove chunk,{err=},{traceback.format_exc()}")
 
     def create_media_chunk_holder(self, chat_id: int, msg_id: int, start: int, target_len: int) -> MediaChunkHolder:
-        def holder_completed_callback(holder: MediaChunkHolder):
-            cache_holder = self.incompleted_chunk.pop(holder.chunk_id, None)
-            if cache_holder is None:
-                logger.warning(f"the holder not in mem, {holder}")
-                return
-            logger.info(f"cache new chunk:{holder}")
-            self.disk_chunk_cache.set(holder.chunk_id, holder)
-
-        return MediaChunkHolder(chat_id, msg_id, start, target_len, callback=holder_completed_callback)
+        return MediaChunkHolder(chat_id, msg_id, start, target_len)
 
     def get_media_chunk(self, msg: types.Message, start: int, lru: bool = True) -> Optional[MediaChunkHolder]:
         res = self._get_media_chunk_cache(msg, start)
@@ -276,3 +259,14 @@ class MediaChunkHolderManager(object):
         if dummy is None:
             return
         self._remove_pop_chunk(dummy)
+
+    def move_media_chunk_to_disk(self, holder: MediaChunkHolder) -> bool:
+        cache_holder = self.incompleted_chunk.pop(holder.chunk_id, None)
+        if cache_holder is None:
+            logger.warning(f"the holder not in mem, {holder}")
+            return False
+        if not holder.is_completed():
+            logger.error(f"chunk not completed, but move to disk:{holder=}")
+        logger.info(f"cache new chunk:{holder}")
+        self.disk_chunk_cache.set(holder.chunk_id, holder)
+        return True
