@@ -40,16 +40,20 @@ async def link_convert(link: str) -> str:
     return url
 
 
-async def get_clients_manager_status(detail) -> dict[str, any]:
-    clients_mgr = TgFileSystemClientManager.get_instance()
-    ret = await clients_mgr.get_status()
-    if not detail:
-        return ret
+async def get_chat_details(mgr: TgFileSystemClientManager) -> dict[int, any]:
     chat_details = {}
-    for _, client in clients_mgr.clients.items():
+    for _, client in mgr.clients.items():
         chat_list = client.client_param.whitelist_chat
         for chat_id in chat_list:
             chat_entity = await client.get_entity(chat_id)
             chat_details[chat_id] = json.loads(chat_entity.to_json())
-    ret["info"] = chat_details
+    return chat_details
+
+
+async def get_clients_manager_status(detail: bool) -> dict[str, any]:
+    clients_mgr = TgFileSystemClientManager.get_instance()
+    ret = await clients_mgr.get_status()
+    if not detail:
+        return ret
+    ret["clist"] = await get_chat_details(clients_mgr)
     return ret

@@ -7,7 +7,7 @@ import os
 import functools
 import traceback
 import logging
-from typing import Union, Optional, Literal
+from typing import Union, Optional, Literal, Callable
 
 from telethon import TelegramClient, types, hints, events
 from telethon.custom import QRLogin
@@ -32,8 +32,7 @@ class TgFileSystemClient(object):
     client: TelegramClient
     media_chunk_manager: MediaChunkHolderManager
     dialogs_cache: Optional[hints.TotalList] = None
-    msg_cache: list[types.Message] = []
-    worker_routines: list[asyncio.Task] = []
+    worker_routines: list[asyncio.Task]
     qr_login: QRLogin | None = None
     login_task: asyncio.Task | None = None
     # rsa key
@@ -80,6 +79,7 @@ class TgFileSystemClient(object):
         )
         self.media_chunk_manager = MediaChunkHolderManager()
         self.db = db
+        self.worker_routines = []
 
     def __del__(self) -> None:
         if self.client.loop.is_running():
@@ -164,7 +164,6 @@ class TgFileSystemClient(object):
         if len(self.client_param.whitelist_chat) > 0:
             self._register_update_event(from_users=self.client_param.whitelist_chat)
             await self.task_queue.put((self._get_unique_task_id(), self._cache_whitelist_chat()))
-            # await self.task_queue.put((self._get_unique_task_id(), self._cache_whitelist_chat2()))
 
     async def stop(self) -> None:
         await self.client.loop.create_task(self._cancel_tasks())
@@ -181,35 +180,50 @@ class TgFileSystemClient(object):
                 logger.error(f"{err=}")
                 logger.error(traceback.format_exc())
 
-    async def _cache_whitelist_chat2(self):
-        for chat_id in self.client_param.whitelist_chat:
+    async def _cache_whitelist_chat_full_policy(self, chat_id: int, callback: Callable = None):
+        async for msg in self.client.iter_messages(chat_id):
+            if len(self.db.get_msg_by_unique_id(UserManager.generate_unique_id_by_msg(self.me, msg))) != 0:
+                continue
+            self.db.insert_by_message(self.me, msg)
+        if callback is not None:
+            callback()
+        logger.info(f"{chat_id} quit cache task.")
+
+    async def _cache_whitelist_chat_lazy_policy(self, chat_id: int, callback: Callable = None):
+        # update newest msg
+        newest_msg = self.db.get_newest_msg_by_chat_id(chat_id)
+        if len(newest_msg) > 0:
+            newest_msg = newest_msg[0]
             async for msg in self.client.iter_messages(chat_id):
-                if len(self.db.get_msg_by_unique_id(UserManager.generate_unique_id_by_msg(self.me, msg))) != 0:
-                    continue
+                if msg.id <= self.db.get_column_msg_id(newest_msg):
+                    break
                 self.db.insert_by_message(self.me, msg)
-            logger.info(f"{chat_id} quit cache task.")
+        # update oldest msg
+        oldest_msg = self.db.get_oldest_msg_by_chat_id(chat_id)
+        if len(oldest_msg) > 0:
+            oldest_msg = oldest_msg[0]
+            offset = self.db.get_column_msg_id(oldest_msg)
+            async for msg in self.client.iter_messages(chat_id, offset_id=offset):
+                self.db.insert_by_message(self.me, msg)
+        else:
+            async for msg in self.client.iter_messages(chat_id):
+                self.db.insert_by_message(self.me, msg)
+        if callback is not None:
+            callback()
+        logger.info(f"{chat_id} quit cache task.")
 
     async def _cache_whitelist_chat(self):
+        max_cache_tasks_num = TgFileSystemClient.MAX_WORKER_ROUTINE // 2
+        tasks_sem = asyncio.Semaphore(value=max_cache_tasks_num)
+
+        def _sem_release_callback():
+            tasks_sem.release()
+
         for chat_id in self.client_param.whitelist_chat:
-            # update newest msg
-            newest_msg = self.db.get_newest_msg_by_chat_id(chat_id)
-            if len(newest_msg) > 0:
-                newest_msg = newest_msg[0]
-                async for msg in self.client.iter_messages(chat_id):
-                    if msg.id <= self.db.get_column_msg_id(newest_msg):
-                        break
-                    self.db.insert_by_message(self.me, msg)
-            # update oldest msg
-            oldest_msg = self.db.get_oldest_msg_by_chat_id(chat_id)
-            if len(oldest_msg) > 0:
-                oldest_msg = oldest_msg[0]
-                offset = self.db.get_column_msg_id(oldest_msg)
-                async for msg in self.client.iter_messages(chat_id, offset_id=offset):
-                    self.db.insert_by_message(self.me, msg)
-            else:
-                async for msg in self.client.iter_messages(chat_id):
-                    self.db.insert_by_message(self.me, msg)
-            logger.info(f"{chat_id} quit cache task.")
+            await tasks_sem.acquire()
+            await self.task_queue.put(
+                (self._get_unique_task_id(), self._cache_whitelist_chat_lazy_policy(chat_id, callback=_sem_release_callback))
+            )
 
     @_acheck_before_call
     async def get_message(self, chat_id: int | str, msg_id: int) -> types.Message:
@@ -287,17 +301,15 @@ class TgFileSystemClient(object):
 
     async def get_messages_by_search_db(
         self,
-        chat_id: int,
+        chat_ids: list[int],
         search_word: str,
         limit: int = 10,
         offset: int = 0,
         inc: bool = False,
         ignore_case: bool = False,
     ) -> list[any]:
-        if chat_id not in self.client_param.whitelist_chat:
-            return []
         res = self.db.get_msg_by_chat_id_and_keyword(
-            chat_id,
+            chat_ids,
             search_word,
             limit=limit,
             offset=offset,
@@ -333,8 +345,6 @@ class TgFileSystemClient(object):
                 f"_download_media_chunk err:{err=},{offset=},{target_size=},{media_holder},\r\n{err=}\r\n{traceback.format_exc()}"
             )
         else:
-            if not media_holder.try_clear_waiter_and_requester():
-                logger.error("I think never run here.")
             if not self.media_chunk_manager.move_media_chunk_to_disk(media_holder):
                 logger.warning(f"move to disk failed, {media_holder=}")
             logger.debug(f"downloaded chunk:{offset=},{target_size=},{media_holder}")

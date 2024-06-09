@@ -39,15 +39,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 class TgToFileListRequestBody(BaseModel):
     token: str
     search: str = ""
-    chat_id: int = 0
+    chat_ids: list[int] = []
     index: int = 0
     length: int = 10
     refresh: bool = False
     inner: bool = False
     inc: bool = False
+
 
 @app.post("/tg/api/v1/file/search")
 @apiutils.atimeit
@@ -59,19 +61,21 @@ async def search_tg_file_list(body: TgToFileListRequestBody):
         res_type = "msg"
         client = await clients_mgr.get_client_force(body.token)
         res_dict = []
-        res = await client.get_messages_by_search_db(body.chat_id, body.search, limit=body.length, inc=body.inc, offset=body.index)
+        res = await client.get_messages_by_search_db(
+            body.chat_ids, body.search, limit=body.length, inc=body.inc, offset=body.index
+        )
         for item in res:
             msg_info = json.loads(item)
             file_name = apiutils.get_message_media_name_from_dict(msg_info)
             chat_id = apiutils.get_message_chat_id_from_dict(msg_info)
             msg_id = apiutils.get_message_msg_id_from_dict(msg_info)
-            msg_info['file_name'] = file_name
-            msg_info['download_url'] = f"{param.base.exposed_url}/tg/api/v1/file/get/{chat_id}/{msg_id}/{file_name}"
-            msg_info['src_tg_link'] = f"https://t.me/c/{chat_id}/{msg_id}"
+            msg_info["file_name"] = file_name
+            msg_info["download_url"] = f"{param.base.exposed_url}/tg/api/v1/file/get/{chat_id}/{msg_id}/{file_name}"
+            msg_info["src_tg_link"] = f"https://t.me/c/{chat_id}/{msg_id}"
             res_dict.append(msg_info)
 
         client_dict = json.loads(client.to_json())
-        client_dict['sign'] = body.token
+        client_dict["sign"] = body.token
 
         response_dict = {
             "client": client_dict,
@@ -95,7 +99,9 @@ async def get_tg_file_list(body: TgToFileListRequestBody):
         client = await clients_mgr.get_client_force(body.token)
         res_dict = []
         if body.search != "":
-            res = await client.get_messages_by_search(body.chat_id, search_word=body.search, limit=body.length, offset=body.index, inner_search=body.inner)
+            res = await client.get_messages_by_search(
+                body.chat_id, search_word=body.search, limit=body.length, offset=body.index, inner_search=body.inner
+            )
         else:
             res = await client.get_messages(body.chat_id, limit=body.length, offset=body.index)
         res_type = "msg"
@@ -104,8 +110,10 @@ async def get_tg_file_list(body: TgToFileListRequestBody):
             if file_name == "":
                 file_name = "unknown.tmp"
             msg_info = json.loads(item.to_json())
-            msg_info['file_name'] = file_name
-            msg_info['download_url'] = f"{param.base.exposed_url}/tg/api/v1/file/get/{body.chat_id}/{item.id}/{file_name}?sign={body.token}"
+            msg_info["file_name"] = file_name
+            msg_info["download_url"] = (
+                f"{param.base.exposed_url}/tg/api/v1/file/get/{body.chat_id}/{item.id}/{file_name}?sign={body.token}"
+            )
             res_dict.append(msg_info)
 
         response_dict = {
@@ -130,10 +138,7 @@ async def get_tg_file_media_stream(token: str, cid: int, mid: int, request: Requ
         "accept-ranges": "bytes",
         "content-encoding": "identity",
         # "content-length": stream_file_size,
-        "access-control-expose-headers": (
-            "content-type, accept-ranges, content-length, "
-            "content-range, content-encoding"
-        ),
+        "access-control-expose-headers": ("content-type, accept-ranges, content-length, " "content-range, content-encoding"),
     }
     range_header = request.headers.get("range")
     try:
@@ -151,8 +156,7 @@ async def get_tg_file_media_stream(token: str, cid: int, mid: int, request: Requ
         if file_name == "":
             maybe_file_type = mime_type.split("/")[-1]
             file_name = f"{chat_id}.{msg_id}.{maybe_file_type}"
-        headers[
-            "Content-Disposition"] = f"inline; filename*=utf-8'{quote(file_name)}'"
+        headers["Content-Disposition"] = f"inline; filename*=utf-8'{quote(file_name)}'"
 
         if range_header is not None:
             start, end = apiutils.get_range_header(range_header, file_size)
@@ -176,7 +180,7 @@ async def get_tg_file_media_stream(token: str, cid: int, mid: int, request: Requ
 
 @app.get("/tg/api/v1/file/get/{chat_id}/{msg_id}/{file_name}")
 @apiutils.atimeit
-async def get_tg_file_media(chat_id: int|str, msg_id: int, file_name: str, sign: str, req: Request):
+async def get_tg_file_media(chat_id: int | str, msg_id: int, file_name: str, sign: str, req: Request):
     try:
         if isinstance(chat_id, str):
             chat_id = int(chat_id)
@@ -224,6 +228,7 @@ class TgToChatListRequestBody(BaseModel):
     length: int = 0
     refresh: bool = False
 
+
 @app.post("/tg/api/v1/client/chat")
 @apiutils.atimeit
 async def get_tg_client_chat_list(body: TgToChatListRequestBody, request: Request):
@@ -235,8 +240,16 @@ async def get_tg_client_chat_list(body: TgToChatListRequestBody, request: Reques
         res_dict = {}
 
         res = await client.get_dialogs(limit=body.length, offset=body.index, refresh=body.refresh)
-        res_dict = [{"id": item.id, "is_channel": item.is_channel,
-                        "is_group": item.is_group, "is_user": item.is_user, "name": item.name, } for item in res]
+        res_dict = [
+            {
+                "id": item.id,
+                "is_channel": item.is_channel,
+                "is_group": item.is_group,
+                "is_user": item.is_user,
+                "name": item.name,
+            }
+            for item in res
+        ]
 
         response_dict = {
             "client": json.loads(client.to_json()),
@@ -248,6 +261,7 @@ async def get_tg_client_chat_list(body: TgToChatListRequestBody, request: Reques
     except Exception as err:
         logger.error(f"{err=}")
         return Response(json.dumps({"detail": f"{err=}"}), status_code=status.HTTP_404_NOT_FOUND)
+
 
 if __name__ == "__main__":
     param = configParse.get_TgToFileSystemParameter()

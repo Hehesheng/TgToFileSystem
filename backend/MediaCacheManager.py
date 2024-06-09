@@ -101,9 +101,9 @@ class MediaChunkHolder(object):
         self.mem = self.mem + mem
         self.length = len(self.mem)
         if self.length > self.target_len:
-            logger.warning(RuntimeWarning(
-                f"MeidaChunk Overflow:start:{self.start},len:{self.length},tlen:{self.target_len}"))
+            logger.warning(RuntimeWarning(f"MeidaChunk Overflow:start:{self.start},len:{self.length},tlen:{self.target_len}"))
         self.notify_waiters()
+        self.try_clear_waiter_and_requester()
 
     def add_chunk_requester(self, req: Request) -> None:
         if self.is_completed():
@@ -144,7 +144,7 @@ class MediaChunkHolder(object):
         # clear all waiter and requester
         self.notify_waiters()
         self.requesters.clear()
-        return True 
+        return True
 
 
 class MediaChunkHolderManager(object):

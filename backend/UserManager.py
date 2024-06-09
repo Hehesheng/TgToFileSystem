@@ -67,18 +67,26 @@ class UserManager(object):
 
     def get_msg_by_chat_id_and_keyword(
         self,
-        chat_id: int,
+        chat_ids: list[int],
         keyword: str,
         limit: int = 10,
         offset: int = 0,
         inc: bool = False,
         ignore_case: bool = False,
     ) -> list[any]:
+        if not chat_ids:
+            logger.warning(f"chat_ids is empty.")
+            return []
         keyword_condition = "msg_ctx LIKE '%{key}%' OR file_name LIKE '%{key}%'"
         if ignore_case:
             keyword_condition = "LOWER(msg_ctx) LIKE LOWER('%{key}%') OR LOWER(file_name) LIKE LOWER('%{key}%')"
         keyword_condition = keyword_condition.format(key=keyword)
-        execute_script = f"SELECT * FROM message WHERE chat_id = {chat_id} AND ({keyword_condition}) ORDER BY date_time {'' if inc else 'DESC '}LIMIT {limit} OFFSET {offset}"
+        chat_ids_str = ""
+        if len(chat_ids) > 1:
+            chat_ids_str = f"{tuple(chat_ids)}"
+        else:
+            chat_ids_str = f"({chat_ids[0]})"
+        execute_script = f"SELECT * FROM message WHERE chat_id in {chat_ids_str} AND ({keyword_condition}) ORDER BY date_time {'' if inc else 'DESC '}LIMIT {limit} OFFSET {offset}"
         logger.info(f"{execute_script=}")
         res = self.cur.execute(execute_script)
         return res

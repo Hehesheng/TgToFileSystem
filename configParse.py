@@ -30,12 +30,11 @@ class TgToFileSystemParameter(BaseModel):
         addr: str = ""
         port: int = ""
     proxy: TgProxyParameter
-    
+
     class TgWebParameter(BaseModel):
         enable: bool = False
         token: str = ""
         port: int = 2000
-        chat_id: list[int] = []
     web: TgWebParameter
 
 @functools.lru_cache
