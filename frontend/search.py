@@ -45,7 +45,7 @@ def loop():
                 )
             )
         with columns[1]:
-            st.session_state.chat_select_list = columns[1].multiselect("**Search in**", chat_list, default=chat_list)
+            st.session_state.chat_select_list = st.multiselect("**Search in**", chat_list, default=chat_list)
         with columns[2]:
             st.text("排序")
             st.query_params.is_order = st.toggle("顺序", value=utils.strtobool(st.query_params.is_order))
