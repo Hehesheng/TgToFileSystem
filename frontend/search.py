@@ -28,15 +28,16 @@ def loop():
     @st.experimental_fragment
     def search_container():
         if "chat_dict" not in st.session_state:
+            wait_client_ready = st.empty()
+            wait_client_ready.status("Server Initializing")
             st.session_state.chat_dict = api.get_white_list_chat_dict()
-        columns = st.columns([1, 1])
-        st.query_params.search_key = columns[0].text_input("**搜索🔎**", value=st.query_params.search_key)
+            wait_client_ready.empty()
+        st.query_params.search_key = st.text_input("**搜索🔎**", value=st.query_params.search_key)
         chat_list = []
         for _, chat_info in st.session_state.chat_dict.items():
             chat_list.append(chat_info["title"])
-        st.session_state.chat_select_list = columns[1].multiselect("**Search in**", chat_list, default=chat_list)
 
-        columns = st.columns([7, 1])
+        columns = st.columns([4, 4, 1])
         with columns[0]:
             st.query_params.search_res_limit = str(
                 st.number_input(
@@ -44,6 +45,8 @@ def loop():
                 )
             )
         with columns[1]:
+            st.session_state.chat_select_list = columns[1].multiselect("**Search in**", chat_list, default=chat_list)
+        with columns[2]:
             st.text("排序")
             st.query_params.is_order = st.toggle("顺序", value=utils.strtobool(st.query_params.is_order))
 
