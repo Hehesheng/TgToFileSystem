@@ -1,6 +1,5 @@
 import sys
 import os
-import logging
 import traceback
 
 import streamlit as st
@@ -26,13 +25,13 @@ def loop():
         st.query_params.search_res_limit = "10"
 
     @st.experimental_fragment
-    def search_container():
+    def search_container(keyword, res_limit, isorder):
         if "chat_dict" not in st.session_state:
             wait_client_ready = st.empty()
             wait_client_ready.status("Server Initializing")
             st.session_state.chat_dict = api.get_white_list_chat_dict()
             wait_client_ready.empty()
-        st.query_params.search_key = st.text_input("**搜索🔎**", value=st.query_params.search_key)
+        st.query_params.search_key = st.text_input("**搜索🔎**", value=keyword)
         chat_list = []
         for _, chat_info in st.session_state.chat_dict.items():
             chat_list.append(chat_info["title"])
@@ -40,17 +39,20 @@ def loop():
         columns = st.columns([4, 4, 1])
         with columns[0]:
             st.query_params.search_res_limit = str(
-                st.number_input(
-                    "**每页结果**", min_value=1, max_value=100, value=int(st.query_params.search_res_limit), format="%d"
-                )
+                st.number_input("**每页结果**", min_value=1, max_value=100, value=res_limit, format="%d")
             )
         with columns[1]:
             st.session_state.chat_select_list = st.multiselect("**Search in**", chat_list, default=chat_list)
         with columns[2]:
             st.text("排序")
-            st.query_params.is_order = st.toggle("顺序", value=utils.strtobool(st.query_params.is_order))
+            st.query_params.is_order = st.toggle("顺序", value=isorder)
 
-    search_container()
+    search_limit_container = st.container()
+    with search_limit_container:
+        keyword = st.query_params.search_key
+        res_limit = int(st.query_params.search_res_limit)
+        isorder = utils.strtobool(st.query_params.is_order)
+        search_container(keyword, res_limit, isorder)
 
     search_clicked = st.button("Search", type="primary", use_container_width=True)
     if not st.session_state.force_skip and (
@@ -77,7 +79,7 @@ def loop():
                 if chat_info["title"] in st.session_state.chat_select_list:
                     search_chat_id_list.append(int(chat_id))
             except Exception as err:
-                logging.warning(f"{err=},{traceback.format_exc()}")
+                print(f"{err=},{traceback.format_exc()}")
         search_res = api.search_database_by_keyword(
             st.query_params.search_key, search_chat_id_list, offset_index, search_limit, is_order
         )
@@ -165,8 +167,8 @@ def loop():
                     download_url = v["download_url"]
                     download_url += f"?sign={sign_token}"
                 except Exception as err:
-                    msg_ctx = f"{err=}\r\n\r\n" + msg_ctx
-                    logging.warning(f"{err=},{traceback.format_exc()}")
+                    msg_ctx = f"Not a filelike~\r\n\r\n" + msg_ctx
+                    print(f"Not a filelike {err=},{traceback.format_exc()}")
                 url_list.append(download_url)
                 media_file_res_container(i, msg_ctx, file_name, file_size, download_url, src_link, mime_type)
             page_switch_render()
