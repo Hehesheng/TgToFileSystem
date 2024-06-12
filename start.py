@@ -5,32 +5,16 @@ import yaml
 import logging
 
 import uvicorn
-from uvicorn.config import LOGGING_CONFIG
 
 import configParse
 from backend import backendapp
 
+log_config = None
 if not os.path.exists(os.path.dirname(__file__) + "/logs"):
     os.mkdir(os.path.dirname(__file__) + "/logs")
 with open("logging_config.yaml", "r") as f:
-    logging.config.dictConfig(yaml.safe_load(f.read()))
-
-LOGGING_CONFIG["formatters"]["default"]["fmt"] = "[%(levelname)s] %(asctime)s [uvicorn.default]:%(message)s"
-LOGGING_CONFIG["formatters"]["access"][
-    "fmt"
-] = '[%(levelname)s] %(asctime)s [uvicorn.access]:%(client_addr)s - "%(request_line)s" %(status_code)s'
-LOGGING_CONFIG["handlers"]["timed_rotating_api_file"] = {
-    "class": "logging.handlers.TimedRotatingFileHandler",
-    "filename": "logs/app.log",
-    "when": "D",
-    "interval": 1,
-    "backupCount": 7,
-    "level": "INFO",
-    "formatter": "default",
-    "encoding": "utf-8",
-}
-LOGGING_CONFIG["loggers"]["uvicorn"]["handlers"].append("timed_rotating_api_file")
-LOGGING_CONFIG["loggers"]["uvicorn.access"]["handlers"].append("timed_rotating_api_file")
+    log_config = yaml.safe_load(f.read())
+    logging.config.dictConfig(log_config)
 
 logger = logging.getLogger(__file__.split("/")[-1])
 
@@ -65,4 +49,4 @@ if __name__ == "__main__":
         if ret == 0:
             asyncio.get_event_loop().run_until_complete(run_web_server())
             sys.exit(0)
-    uvicorn.run(backendapp, host="0.0.0.0", port=param.base.port, app_dir="backend")
+    uvicorn.run(backendapp, host="0.0.0.0", port=param.base.port, app_dir="backend", log_config=log_config)
