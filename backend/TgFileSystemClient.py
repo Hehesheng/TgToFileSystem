@@ -2,7 +2,6 @@ import asyncio
 import json
 import time
 import re
-import rsa
 import os
 import functools
 import traceback
@@ -35,10 +34,6 @@ class TgFileSystemClient(object):
     worker_routines: list[asyncio.Task]
     qr_login: QRLogin | None = None
     login_task: asyncio.Task | None = None
-    # rsa key
-    sign: str
-    public_key: rsa.PublicKey
-    private_key: rsa.PrivateKey
     # task should: (task_id, callabledFunc)
     task_queue: asyncio.Queue
     task_id: int = 0
@@ -51,6 +46,7 @@ class TgFileSystemClient(object):
         session_name: str,
         param: configParse.TgToFileSystemParameter,
         db: UserManager,
+        chunk_manager: MediaChunkHolderManager,
     ) -> None:
         self.api_id = param.tgApi.api_id
         self.api_hash = param.tgApi.api_hash
@@ -64,12 +60,10 @@ class TgFileSystemClient(object):
             if param.proxy.enable
             else {}
         )
-        self.public_key, self.private_key = rsa.newkeys(1024)
         self.client_param = next(
             (client_param for client_param in param.clients if client_param.token == session_name),
             configParse.TgToFileSystemParameter.ClientConfigPatameter(),
         )
-        self.sign = self.client_param.token
         self.task_queue = asyncio.Queue()
         self.client = TelegramClient(
             f"{os.path.dirname(__file__)}/db/{self.session_name}.session",
@@ -77,7 +71,7 @@ class TgFileSystemClient(object):
             self.api_hash,
             proxy=self.proxy_param,
         )
-        self.media_chunk_manager = MediaChunkHolderManager()
+        self.media_chunk_manager = chunk_manager
         self.db = db
         self.worker_routines = []
 

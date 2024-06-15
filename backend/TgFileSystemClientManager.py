@@ -1,13 +1,14 @@
-from typing import Any
 import asyncio
 import time
 import hashlib
+import rsa
 import os
 import traceback
 import logging
 
 from backend.TgFileSystemClient import TgFileSystemClient
 from backend.UserManager import UserManager
+from backend.MediaCacheManager import MediaChunkHolderManager
 import configParse
 
 logger = logging.getLogger(__file__.split("/")[-1])
@@ -18,6 +19,10 @@ class TgFileSystemClientManager(object):
     is_init: bool = False
     param: configParse.TgToFileSystemParameter
     clients: dict[str, TgFileSystemClient] = {}
+    # rsa key
+    cache_sign: str
+    public_key: rsa.PublicKey
+    private_key: rsa.PrivateKey
 
     @classmethod
     def get_instance(cls):
@@ -29,6 +34,8 @@ class TgFileSystemClientManager(object):
         self.param = param
         self.db = UserManager()
         self.loop = asyncio.get_running_loop()
+        self.media_chunk_manager = MediaChunkHolderManager()
+        self.public_key, self.private_key = rsa.newkeys(1024)
         if self.loop.is_running():
             self.loop.create_task(self._start_clients())
         else:
@@ -76,7 +83,7 @@ class TgFileSystemClientManager(object):
     def create_client(self, client_id: str = None) -> TgFileSystemClient:
         if client_id is None:
             client_id = self.generate_client_id()
-        client = TgFileSystemClient(client_id, self.param, self.db)
+        client = TgFileSystemClient(client_id, self.param, self.db, self.media_chunk_manager)
         return client
 
     def _register_client(self, client: TgFileSystemClient) -> bool:

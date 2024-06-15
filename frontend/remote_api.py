@@ -80,7 +80,6 @@ def convert_tg_link_to_proxy_link(link: str) -> str:
     request_url = background_server_url + link_convert_api_route + f"?link={link}"
     response = requests.get(request_url)
     if response.status_code != 200:
-        print(f"link convert fail: {response.status_code}, {response.content.decode('utf-8')}")
-        return ""
+        return f"link convert fail: {response.status_code}, {response.content.decode('utf-8')}"
     response_js = json.loads(response.content.decode("utf-8"))
     return response_js["url"]

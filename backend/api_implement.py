@@ -1,8 +1,12 @@
 import traceback
 import json
 import logging
+from urllib.parse import quote
 
 from telethon import types, hints, utils
+import fastapi
+from fastapi import Request
+from fastapi.responses import StreamingResponse, Response
 
 import configParse
 from backend import apiutils
@@ -57,3 +61,50 @@ async def get_clients_manager_status(detail: bool) -> dict[str, any]:
         return ret
     ret["clist"] = await get_chat_details(clients_mgr)
     return ret
+
+
+async def get_media_file_stream(token: str, cid: int, mid: int, request: Request) -> StreamingResponse:
+    msg_id = mid
+    chat_id = cid
+    headers = {
+        # "content-type": "video/mp4",
+        "accept-ranges": "bytes",
+        "content-encoding": "identity",
+        # "content-length": stream_file_size,
+        "access-control-expose-headers": ("content-type, accept-ranges, content-length, " "content-range, content-encoding"),
+    }
+    range_header = request.headers.get("range")
+
+    clients_mgr = TgFileSystemClientManager.get_instance()
+    client = await clients_mgr.get_client_force(token)
+    msg = await client.get_message(chat_id, msg_id)
+    if not isinstance(msg.media, types.MessageMediaDocument) and not isinstance(msg.media, types.MessageMediaPhoto):
+        raise RuntimeError(f"request don't support: {msg.media=}")
+    file_size = msg.media.document.size
+    start = 0
+    end = file_size - 1
+    status_code = fastapi.status.HTTP_200_OK
+    mime_type = msg.media.document.mime_type
+    headers["content-type"] = mime_type
+    # headers["content-length"] = str(file_size)
+    file_name = apiutils.get_message_media_name(msg)
+    if file_name == "":
+        maybe_file_type = mime_type.split("/")[-1]
+        file_name = f"{chat_id}.{msg_id}.{maybe_file_type}"
+    headers["Content-Disposition"] = f"inline; filename*=utf-8'{quote(file_name)}'"
+
+    if range_header is not None:
+        start, end = apiutils.get_range_header(range_header, file_size)
+        size = end - start + 1
+        # headers["content-length"] = str(size)
+        headers["content-range"] = f"bytes {start}-{end}/{file_size}"
+        status_code = fastapi.status.HTTP_206_PARTIAL_CONTENT
+    else:
+        headers["content-length"] = str(file_size)
+        headers["content-range"] = f"bytes 0-{file_size-1}/{file_size}"
+    return StreamingResponse(
+        client.streaming_get_iter(msg, start, end, request),
+        headers=headers,
+        media_type=mime_type,
+        status_code=status_code,
+    )

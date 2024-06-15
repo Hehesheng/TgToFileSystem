@@ -1,15 +1,16 @@
 import asyncio
 import json
 import os
+import sys
 import logging
 import traceback
+from typing import Annotated
 from urllib.parse import quote
 
 import uvicorn
-from fastapi import FastAPI, status, Request
+from fastapi import FastAPI, status, Request, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
-from contextlib import asynccontextmanager
 from telethon import types, hints, utils
 from pydantic import BaseModel
 
@@ -21,7 +22,6 @@ from backend.TgFileSystemClientManager import TgFileSystemClientManager
 logger = logging.getLogger(__file__.split("/")[-1])
 
 
-@asynccontextmanager
 async def lifespan(app: FastAPI):
     clients_mgr = TgFileSystemClientManager.get_instance()
     res = await clients_mgr.get_status()
@@ -131,48 +131,8 @@ async def get_tg_file_list(body: TgToFileListRequestBody):
 @app.get("/tg/api/v1/file/msg")
 @apiutils.atimeit
 async def get_tg_file_media_stream(token: str, cid: int, mid: int, request: Request):
-    msg_id = mid
-    chat_id = cid
-    headers = {
-        # "content-type": "video/mp4",
-        "accept-ranges": "bytes",
-        "content-encoding": "identity",
-        # "content-length": stream_file_size,
-        "access-control-expose-headers": ("content-type, accept-ranges, content-length, " "content-range, content-encoding"),
-    }
-    range_header = request.headers.get("range")
     try:
-        clients_mgr = TgFileSystemClientManager.get_instance()
-        client = await clients_mgr.get_client_force(token)
-        msg = await client.get_message(chat_id, msg_id)
-        file_size = msg.media.document.size
-        start = 0
-        end = file_size - 1
-        status_code = status.HTTP_200_OK
-        mime_type = msg.media.document.mime_type
-        headers["content-type"] = mime_type
-        # headers["content-length"] = str(file_size)
-        file_name = apiutils.get_message_media_name(msg)
-        if file_name == "":
-            maybe_file_type = mime_type.split("/")[-1]
-            file_name = f"{chat_id}.{msg_id}.{maybe_file_type}"
-        headers["Content-Disposition"] = f"inline; filename*=utf-8'{quote(file_name)}'"
-
-        if range_header is not None:
-            start, end = apiutils.get_range_header(range_header, file_size)
-            size = end - start + 1
-            # headers["content-length"] = str(size)
-            headers["content-range"] = f"bytes {start}-{end}/{file_size}"
-            status_code = status.HTTP_206_PARTIAL_CONTENT
-        else:
-            headers["content-length"] = str(file_size)
-            headers["content-range"] = f"bytes 0-{file_size-1}/{file_size}"
-        return StreamingResponse(
-            client.streaming_get_iter(msg, start, end, request),
-            headers=headers,
-            media_type=mime_type,
-            status_code=status_code,
-        )
+        return api.get_media_file_stream(token, cid, mid, request)
     except Exception as err:
         logger.error(f"{err=},{traceback.format_exc()}")
         return Response(json.dumps({"detail": f"{err=}"}), status_code=status.HTTP_404_NOT_FOUND)
@@ -263,6 +223,29 @@ async def get_tg_client_chat_list(body: TgToChatListRequestBody, request: Reques
         return Response(json.dumps({"detail": f"{err=}"}), status_code=status.HTTP_404_NOT_FOUND)
 
 
+async def get_verify(q: str | None, skip: int = 0):
+    logger.info("run common param")
+    if skip < 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"{q=},{skip=}")
+
+
+@app.get("/tg/api/v1/test", dependencies=[Depends(get_verify)])
+async def test_get_depends_verify_method(other: str = ""):
+    return Response()
+
+
+async def post_verify(body: TgToChatListRequestBody | None = None):
+    if not body or not body.token:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST)
+    return body
+
+
+@app.post("/tg/api/v1/test", dependencies=[Depends(post_verify)])
+async def test_get_depends_verify_method(body: TgToChatListRequestBody):
+    return Response()
+
+
 if __name__ == "__main__":
     param = configParse.get_TgToFileSystemParameter()
-    uvicorn.run(app, host="0.0.0.0", port=param.base.port)
+    isDebug = True if sys.gettrace() else False
+    uvicorn.run(app, host="0.0.0.0", port=param.base.port, reload=isDebug)

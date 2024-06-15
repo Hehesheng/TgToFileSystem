@@ -31,7 +31,7 @@ def loop():
             wait_client_ready.status("Server Initializing")
             st.session_state.chat_dict = api.get_white_list_chat_dict()
             wait_client_ready.empty()
-        st.query_params.search_key = st.text_input("**搜索🔎**", value=keyword)
+        st.query_params.search_key = st.text_input("**Search🔎**", value=keyword)
         chat_list = []
         for _, chat_info in st.session_state.chat_dict.items():
             chat_list.append(chat_info["title"])
@@ -39,13 +39,13 @@ def loop():
         columns = st.columns([4, 4, 1])
         with columns[0]:
             st.query_params.search_res_limit = str(
-                st.number_input("**每页结果**", min_value=1, max_value=100, value=res_limit, format="%d")
+                st.number_input("**Results per page**", min_value=1, max_value=100, value=res_limit, format="%d")
             )
         with columns[1]:
             st.session_state.chat_select_list = st.multiselect("**Search in**", chat_list, default=chat_list)
         with columns[2]:
-            st.text("排序")
-            st.query_params.is_order = st.toggle("顺序", value=isorder)
+            st.text("Sort")
+            st.query_params.is_order = st.toggle("Time🔼", value=isorder)
 
     search_limit_container = st.container()
     with search_limit_container:
