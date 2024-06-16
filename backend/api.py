@@ -132,7 +132,7 @@ async def get_tg_file_list(body: TgToFileListRequestBody):
 @apiutils.atimeit
 async def get_tg_file_media_stream(token: str, cid: int, mid: int, request: Request):
     try:
-        return api.get_media_file_stream(token, cid, mid, request)
+        return await api.get_media_file_stream(token, cid, mid, request)
     except Exception as err:
         logger.error(f"{err=},{traceback.format_exc()}")
         return Response(json.dumps({"detail": f"{err=}"}), status_code=status.HTTP_404_NOT_FOUND)
