@@ -9,7 +9,7 @@ import remote_api as api
 
 
 @st.experimental_fragment
-def loop():
+def loop(sign: str):
     if "page_index" not in st.session_state:
         st.session_state.page_index = 1
     if "force_skip" not in st.session_state:
@@ -81,7 +81,7 @@ def loop():
             except Exception as err:
                 print(f"{err=},{traceback.format_exc()}")
         search_res = api.search_database_by_keyword(
-            st.query_params.search_key, search_chat_id_list, offset_index, search_limit, is_order
+            sign, st.query_params.search_key, search_chat_id_list, offset_index, search_limit, is_order
         )
         status_bar.empty()
         if search_res is None:

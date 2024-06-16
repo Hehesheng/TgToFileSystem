@@ -9,6 +9,7 @@ __pycache__
 *.toml
 *.db
 *.service
+*.pem
 log
 cache_media
 tmp

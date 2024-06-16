@@ -41,7 +41,7 @@ app.add_middleware(
 
 
 class TgToFileListRequestBody(BaseModel):
-    token: str
+    sign: str
     search: str = ""
     chat_ids: list[int] = []
     index: int = 0
@@ -51,15 +51,31 @@ class TgToFileListRequestBody(BaseModel):
     inc: bool = False
 
 
-@app.post("/tg/api/v1/file/search")
+async def verify_post_sign(body: TgToFileListRequestBody):
+    clients_mgr = TgFileSystemClientManager.get_instance()
+    if not clients_mgr.verify_sign(body.sign):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"{body}")
+
+
+async def verify_get_sign(sign: str):
+    clients_mgr = TgFileSystemClientManager.get_instance()
+    sign = sign.replace(" ", "+")
+    if not clients_mgr.verify_sign(sign):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"{sign}")
+    return sign
+
+
+@app.post("/tg/api/v1/file/search", dependencies=[Depends(verify_post_sign)])
 @apiutils.atimeit
 async def search_tg_file_list(body: TgToFileListRequestBody):
     try:
-        param = configParse.get_TgToFileSystemParameter()
         clients_mgr = TgFileSystemClientManager.get_instance()
+        param = configParse.get_TgToFileSystemParameter()
         res = hints.TotalList()
         res_type = "msg"
-        client = await clients_mgr.get_client_force(body.token)
+        sign_info = clients_mgr.parse_sign(body.sign)
+        client_id = TgFileSystemClientManager.get_sign_client_id(sign_info)
+        client = await clients_mgr.get_client_force(client_id)
         res_dict = []
         res = await client.get_messages_by_search_db(
             body.chat_ids, body.search, limit=body.length, inc=body.inc, offset=body.index
@@ -75,7 +91,7 @@ async def search_tg_file_list(body: TgToFileListRequestBody):
             res_dict.append(msg_info)
 
         client_dict = json.loads(client.to_json())
-        client_dict["sign"] = body.token
+        client_dict["sign"] = body.sign
 
         response_dict = {
             "client": client_dict,
@@ -128,17 +144,18 @@ async def get_tg_file_list(body: TgToFileListRequestBody):
         return Response(json.dumps({"detail": f"{err=}"}), status_code=status.HTTP_404_NOT_FOUND)
 
 
-@app.get("/tg/api/v1/file/msg")
+@app.get("/tg/api/v1/file/msg", deprecated=[Depends(verify_get_sign)])
 @apiutils.atimeit
-async def get_tg_file_media_stream(token: str, cid: int, mid: int, request: Request):
+async def get_tg_file_media_stream(sign: str, cid: int, mid: int, request: Request):
     try:
-        return await api.get_media_file_stream(token, cid, mid, request)
+        sign = sign.replace(" ", "+")
+        return await api.get_media_file_stream(sign, cid, mid, request)
     except Exception as err:
         logger.error(f"{err=},{traceback.format_exc()}")
         return Response(json.dumps({"detail": f"{err=}"}), status_code=status.HTTP_404_NOT_FOUND)
 
 
-@app.get("/tg/api/v1/file/get/{chat_id}/{msg_id}/{file_name}")
+@app.get("/tg/api/v1/file/get/{chat_id}/{msg_id}/{file_name}", dependencies=[Depends(verify_get_sign)])
 @apiutils.atimeit
 async def get_tg_file_media(chat_id: int | str, msg_id: int, file_name: str, sign: str, req: Request):
     try:
@@ -223,15 +240,20 @@ async def get_tg_client_chat_list(body: TgToChatListRequestBody, request: Reques
         return Response(json.dumps({"detail": f"{err=}"}), status_code=status.HTTP_404_NOT_FOUND)
 
 
-async def get_verify(q: str | None, skip: int = 0):
-    logger.info("run common param")
-    if skip < 0:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"{q=},{skip=}")
+async def get_verify(id: str = None):
+    if id is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"{id=}")
+    client_mgr = TgFileSystemClientManager.get_instance()
+    client = await client_mgr.get_client_force(id)
+    if not client.is_valid():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"{id=}")
 
 
 @app.get("/tg/api/v1/test", dependencies=[Depends(get_verify)])
-async def test_get_depends_verify_method(other: str = ""):
-    return Response()
+async def test_get_depends_verify_method(id: str, other: str = ""):
+    client_mgr = TgFileSystemClientManager.get_instance()
+    client = await client_mgr.get_client_force(id)
+    return Response((await client.client.get_me()).stringify())
 
 
 async def post_verify(body: TgToChatListRequestBody | None = None):

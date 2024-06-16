@@ -10,7 +10,7 @@ from fastapi.responses import StreamingResponse, Response
 
 import configParse
 from backend import apiutils
-from backend.TgFileSystemClientManager import TgFileSystemClientManager
+from backend.TgFileSystemClientManager import TgFileSystemClientManager, EnumSignLevel
 
 
 logger = logging.getLogger(__file__.split("/")[-1])
@@ -38,9 +38,8 @@ async def link_convert(link: str) -> str:
     msg = await client.get_message(chat_id_or_name, msg_id)
     file_name = apiutils.get_message_media_name(msg)
     param = configParse.get_TgToFileSystemParameter()
-    url = (
-        f"{param.base.exposed_url}/tg/api/v1/file/get/{utils.get_peer_id(msg.peer_id)}/{msg.id}/{file_name}?sign={client.sign}"
-    )
+    sign = clients_mgr.generate_sign(client.session_name, EnumSignLevel.VIST)
+    url = f"{param.base.exposed_url}/tg/api/v1/file/get/{utils.get_peer_id(msg.peer_id)}/{msg.id}/{file_name}?sign={sign}"
     return url
 
 
@@ -63,7 +62,7 @@ async def get_clients_manager_status(detail: bool) -> dict[str, any]:
     return ret
 
 
-async def get_media_file_stream(token: str, cid: int, mid: int, request: Request) -> StreamingResponse:
+async def get_media_file_stream(sign: str, cid: int, mid: int, request: Request) -> StreamingResponse:
     msg_id = mid
     chat_id = cid
     headers = {
@@ -76,7 +75,9 @@ async def get_media_file_stream(token: str, cid: int, mid: int, request: Request
     range_header = request.headers.get("range")
 
     clients_mgr = TgFileSystemClientManager.get_instance()
-    client = await clients_mgr.get_client_force(token)
+    sign_info = clients_mgr.parse_sign(sign)
+    client_id = TgFileSystemClientManager.get_sign_client_id(sign_info)
+    client = await clients_mgr.get_client_force(client_id)
     msg = await client.get_message(chat_id, msg_id)
     if not isinstance(msg.media, types.MessageMediaDocument) and not isinstance(msg.media, types.MessageMediaPhoto):
         raise RuntimeError(f"request don't support: {msg.media=}")

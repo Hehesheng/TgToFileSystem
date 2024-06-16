@@ -8,6 +8,7 @@ st.set_page_config(page_title="TgToolbox", page_icon="🕹️", layout="wide", i
 
 backend_status = api.get_backend_client_status()
 need_login = False
+sign = ""
 
 if backend_status is None or not backend_status["init"]:
     st.status("Server not ready")
@@ -15,8 +16,10 @@ if backend_status is None or not backend_status["init"]:
     st.rerun()
 
 for v in backend_status["clients"]:
-    if not v["status"]:
-        need_login = True
+    if v["name"] != api.get_config_default_name():
+        continue
+    need_login = not v["status"]
+    sign = v["sign"]
 
 if need_login:
     import login
@@ -28,7 +31,7 @@ search_tab, link_convert_tab = st.tabs(["Search", "Link Convert"])
 with search_tab:
     import search
 
-    search.loop()
+    search.loop(sign)
 with link_convert_tab:
     import link_convert
 

@@ -61,8 +61,8 @@ class TgFileSystemClient(object):
             else {}
         )
         self.client_param = next(
-            (client_param for client_param in param.clients if client_param.token == session_name),
-            configParse.TgToFileSystemParameter.ClientConfigPatameter(),
+            (client_param for client_param in param.clients if client_param.name == session_name),
+            configParse.TgToFileSystemParameter.ClientConfigPatameter(name="__tmp__"),
         )
         self.task_queue = asyncio.Queue()
         self.client = TelegramClient(

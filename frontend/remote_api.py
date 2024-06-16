@@ -51,10 +51,12 @@ def get_white_list_chat_dict() -> dict[str, any]:
 search_api_route = "/tg/api/v1/file/search"
 
 
-def search_database_by_keyword(keyword: str, chat_list: list[int], offset: int, limit: int, is_order: bool) -> list[any] | None:
+def search_database_by_keyword(
+    sign: str, keyword: str, chat_list: list[int], offset: int, limit: int, is_order: bool
+) -> list[any] | None:
     request_url = background_server_url + search_api_route
     req_body = {
-        "token": param.web.token,
+        "sign": sign,
         "search": keyword,
         "chat_ids": chat_list,
         "index": offset,
@@ -83,3 +85,7 @@ def convert_tg_link_to_proxy_link(link: str) -> str:
         return f"link convert fail: {response.status_code}, {response.content.decode('utf-8')}"
     response_js = json.loads(response.content.decode("utf-8"))
     return response_js["url"]
+
+
+def get_config_default_name() -> str:
+    return param.web.name
