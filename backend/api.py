@@ -59,7 +59,6 @@ async def verify_post_sign(body: TgToFileListRequestBody):
 
 async def verify_get_sign(sign: str):
     clients_mgr = TgFileSystemClientManager.get_instance()
-    sign = sign.replace(" ", "+")
     if not clients_mgr.verify_sign(sign):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"{sign}")
     return sign

@@ -45,7 +45,7 @@ def loop(sign: str):
             st.session_state.chat_select_list = st.multiselect("**Search in**", chat_list, default=chat_list)
         with columns[2]:
             st.text("Sort")
-            st.query_params.is_order = st.toggle("Time🔼", value=isorder)
+            st.query_params.is_order = st.toggle("Time 🔼", value=isorder)
 
     search_limit_container = st.container()
     with search_limit_container:

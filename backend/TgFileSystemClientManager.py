@@ -113,10 +113,14 @@ class TgFileSystemClientManager(object):
         need_encrypt_bin = need_encrypt_str.encode()
         sign_bin = rsa.encrypt(need_encrypt_bin, self.public_key)
         sign = base64.b64encode(sign_bin).decode()
+        sign = sign.replace("+", "-")
+        sign = sign.replace("/", "_")
         logger.info(f"generate {sign_type.name} sign: {sign}")
         return sign
 
     def parse_sign(self, sign: str) -> dict[str, any] | None:
+        sign = sign.replace("-", "+")
+        sign = sign.replace("_", "/")
         try:
             res_dict = {}
             sign_bin = base64.b64decode(sign)
