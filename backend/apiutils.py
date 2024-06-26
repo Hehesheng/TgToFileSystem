@@ -66,7 +66,7 @@ def get_message_media_name(msg: types.Message) -> str:
             if name:
                 return name
             extension = utils.get_extension(msg.media)
-            peer_id = utils.get_peer_id(msg)
+            peer_id = utils.get_peer_id(msg.peer_id)
             return f"{kind}_{peer_id}-{msg.id}{extension}"
         case _:
             return ""

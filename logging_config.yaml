@@ -45,4 +45,5 @@ loggers:
     level: INFO
     propagate: false
   uvicorn.error:
+    handlers: [console, timed_rotating_file]
     level: INFO
