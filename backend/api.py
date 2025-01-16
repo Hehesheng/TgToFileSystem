@@ -85,7 +85,7 @@ async def search_tg_file_list(body: TgToFileListRequestBody):
             chat_id = apiutils.get_message_chat_id_from_dict(msg_info)
             msg_id = apiutils.get_message_msg_id_from_dict(msg_info)
             msg_info["file_name"] = file_name
-            msg_info["download_url"] = f"{param.base.exposed_url}/tg/api/v1/file/get/{chat_id}/{msg_id}/{file_name}"
+            msg_info["download_url"] = f"{param.base.exposed_url}/tg/api/v1/file/get/{chat_id}/{msg_id}/{quote(file_name)}"
             msg_info["src_tg_link"] = f"https://t.me/c/{chat_id}/{msg_id}"
             res_dict.append(msg_info)
 
@@ -127,7 +127,7 @@ async def get_tg_file_list(body: TgToFileListRequestBody):
             msg_info = json.loads(item.to_json())
             msg_info["file_name"] = file_name
             msg_info["download_url"] = (
-                f"{param.base.exposed_url}/tg/api/v1/file/get/{body.chat_id}/{item.id}/{file_name}?sign={body.token}"
+                f"{param.base.exposed_url}/tg/api/v1/file/get/{body.chat_id}/{item.id}/{quote(file_name)}?sign={body.token}"
             )
             res_dict.append(msg_info)
 

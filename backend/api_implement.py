@@ -39,7 +39,9 @@ async def link_convert(link: str) -> str:
     file_name = apiutils.get_message_media_name(msg)
     param = configParse.get_TgToFileSystemParameter()
     sign = clients_mgr.generate_sign(client.session_name, EnumSignLevel.VIST)
-    url = f"{param.base.exposed_url}/tg/api/v1/file/get/{utils.get_peer_id(msg.peer_id)}/{msg.id}/{file_name}?sign={sign}"
+    url = (
+        f"{param.base.exposed_url}/tg/api/v1/file/get/{utils.get_peer_id(msg.peer_id)}/{msg.id}/{quote(file_name)}?sign={sign}"
+    )
     return url
 
 
