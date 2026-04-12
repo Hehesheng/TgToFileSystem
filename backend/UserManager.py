@@ -645,7 +645,8 @@ class UserManager(object):
 
             # Sync data with spaces removed for better Chinese matching
             # SQLite doesn't support replace() in INSERT SELECT, so do it row by row
-            rows = self.cur.execute("SELECT unique_id, msg_ctx, file_name FROM message")
+            # Use fetchall() to avoid cursor reset during insert iteration
+            rows = self.cur.execute("SELECT unique_id, msg_ctx, file_name FROM message").fetchall()
             for row in rows:
                 unique_id, msg_ctx, file_name = row
                 msg_ctx_fts = re.sub(r'\s+', '', msg_ctx or "")
