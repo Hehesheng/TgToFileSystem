@@ -19,6 +19,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from backend.UserManager import UserManager
+from tqdm import tqdm
 
 
 def main():
@@ -40,18 +41,33 @@ def main():
     if args.stats:
         return
 
+    # Estimate records to migrate
+    to_migrate = stats.get('old_count_estimate', 0)
+    if args.limit:
+        to_migrate = min(to_migrate, args.limit)
+
+    if to_migrate == 0:
+        print('\nNo records need migration.')
+        return
+
     # Confirm before full migration
-    if args.limit is None and stats.get('old_count_estimate', 0) > 10000:
-        print(f'\nWARNING: About to migrate ~{stats["old_count_estimate"]} records')
+    if args.limit is None and to_migrate > 10000:
+        print(f'\nWARNING: About to migrate ~{to_migrate} records')
         print('This may take several minutes. Continue? [y/N]')
         response = input().strip().lower()
         if response != 'y':
             print('Cancelled.')
             return
 
-    # Run migration
+    # Run migration with progress bar
     print('\n=== Starting Migration ===')
-    result = db.migrate_to_compact(batch_size=args.batch, limit=args.limit)
+    with tqdm(total=to_migrate, desc='Migrating', unit='records') as pbar:
+        result = db.migrate_to_compact(
+            batch_size=args.batch,
+            limit=args.limit,
+            progress_callback=lambda n: pbar.update(n),
+        )
+
     print(f'\nMigration Result:')
     for k, v in result.items():
         print(f'  {k}: {v}')

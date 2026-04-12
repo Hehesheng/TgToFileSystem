@@ -722,13 +722,16 @@ class UserManager(object):
             logger.error(f"{err=},{traceback.format_exc()}")
             return {}
 
-    def migrate_to_compact(self, batch_size: int = 1000, limit: int = None) -> dict:
+    def migrate_to_compact(
+        self, batch_size: int = 1000, limit: int = None, progress_callback=None
+    ) -> dict:
         """
         Migrate old msg_js format to compact format.
 
         Args:
             batch_size: Number of records per batch
             limit: Maximum total records to migrate (None = all)
+            progress_callback: Optional callback for progress updates (called with count)
 
         Returns:
             Stats about migration progress
@@ -788,6 +791,9 @@ class UserManager(object):
                     )
 
                     migrated += 1
+
+                    if progress_callback:
+                        progress_callback(1)
 
                     # Commit in batches
                     if (i + 1) % batch_size == 0:
