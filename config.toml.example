@@ -4,10 +4,9 @@ port = 7777
 timeit_enable = false
 exposed_url = "http://127.0.0.1:7777"
 
-# Permanent sign for ani player RSS subscription (optional)
-# If not set, will auto-generate from first available client
-# permanent_sign_client = "default"  # client name for generating permanent sign
-# permanent_sign_years = 10  # sign validity in years (default: 10)
+# ani player API key (random 16-char string for security)
+# Generate: python -c "import secrets; print(secrets.token_urlsafe(12))"
+ani_api_key = ""  # e.g. "aBc123XyZ789qRs"
 
 [tgApi]
 api_id = int_app_id_from_tg

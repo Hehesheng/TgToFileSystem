@@ -92,24 +92,29 @@ class UserManager(object):
         Returns:
             List of matching messages
         """
-        if not chat_ids:
-            logger.warning("chat_ids is empty.")
-            return []
-
         if not keyword or keyword.strip() == "":
             # No keyword, return by date
-            chat_placeholders = ",".join(["?"] * len(chat_ids))
-            order_direction = "" if inc else "DESC"
-            execute_script = f"""
-                SELECT * FROM message
-                WHERE chat_id IN ({chat_placeholders})
-                ORDER BY date_time {order_direction}
-                LIMIT ? OFFSET ?
-            """
-            params = tuple(chat_ids) + (limit, offset)
+            if chat_ids:
+                chat_placeholders = ",".join(["?"] * len(chat_ids))
+                order_direction = "" if inc else "DESC"
+                execute_script = f"""
+                    SELECT * FROM message
+                    WHERE chat_id IN ({chat_placeholders})
+                    ORDER BY date_time {order_direction}
+                    LIMIT ? OFFSET ?
+                """
+                params = tuple(chat_ids) + (limit, offset)
+            else:
+                # No chat_ids filter - search all
+                order_direction = "" if inc else "DESC"
+                execute_script = f"""
+                    SELECT * FROM message
+                    ORDER BY date_time {order_direction}
+                    LIMIT ? OFFSET ?
+                """
+                params = (limit, offset)
             return self.cur.execute(execute_script, params)
 
-        chat_placeholders = ",".join(["?"] * len(chat_ids))
         import re
 
         keyword_no_space = re.sub(r'\s+', '', keyword)
@@ -120,16 +125,28 @@ class UserManager(object):
 
             # Use bm25() for relevance ranking, pagination at SQL level
             order_clause = "date_time ASC" if inc else "bm25(message_fts) ASC"
-            execute_script = f"""
-                SELECT m.*, bm25(message_fts) as score
-                FROM message m
-                JOIN message_fts f ON m.unique_id = f.unique_id
-                WHERE m.chat_id IN ({chat_placeholders})
-                AND message_fts MATCH ?
-                ORDER BY {order_clause}
-                LIMIT ? OFFSET ?
-            """
-            params = tuple(chat_ids) + (fts_query, limit, offset)
+            if chat_ids:
+                execute_script = f"""
+                    SELECT m.*, bm25(message_fts) as score
+                    FROM message m
+                    JOIN message_fts f ON m.unique_id = f.unique_id
+                    WHERE m.chat_id IN ({chat_placeholders})
+                    AND message_fts MATCH ?
+                    ORDER BY {order_clause}
+                    LIMIT ? OFFSET ?
+                """
+                params = tuple(chat_ids) + (fts_query, limit, offset)
+            else:
+                # No chat filter - search all
+                execute_script = f"""
+                    SELECT m.*, bm25(message_fts) as score
+                    FROM message m
+                    JOIN message_fts f ON m.unique_id = f.unique_id
+                    WHERE message_fts MATCH ?
+                    ORDER BY {order_clause}
+                    LIMIT ? OFFSET ?
+                """
+                params = (fts_query, limit, offset)
             logger.info(f"FTS query: {fts_query}")
 
             results = self.cur.execute(execute_script, params).fetchall()
@@ -138,14 +155,24 @@ class UserManager(object):
 
         else:
             # Short keyword: LIKE scan with pagination
-            execute_script = f"""
-                SELECT * FROM message
-                WHERE chat_id IN ({chat_placeholders})
-                AND (msg_ctx LIKE ? OR file_name LIKE ?)
-                ORDER BY date_time DESC
-                LIMIT ? OFFSET ?
-            """
-            params = tuple(chat_ids) + (f"%{keyword_no_space}%", f"%{keyword_no_space}%", limit, offset)
+            if chat_ids:
+                execute_script = f"""
+                    SELECT * FROM message
+                    WHERE chat_id IN ({chat_placeholders})
+                    AND (msg_ctx LIKE ? OR file_name LIKE ?)
+                    ORDER BY date_time DESC
+                    LIMIT ? OFFSET ?
+                """
+                params = tuple(chat_ids) + (f"%{keyword_no_space}%", f"%{keyword_no_space}%", limit, offset)
+            else:
+                # No chat filter - search all
+                execute_script = f"""
+                    SELECT * FROM message
+                    WHERE (msg_ctx LIKE ? OR file_name LIKE ?)
+                    ORDER BY date_time DESC
+                    LIMIT ? OFFSET ?
+                """
+                params = (f"%{keyword_no_space}%", f"%{keyword_no_space}%", limit, offset)
             logger.info(f"LIKE scan for short keyword: {keyword_no_space}")
             return self.cur.execute(execute_script, params)
 

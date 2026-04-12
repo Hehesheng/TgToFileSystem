@@ -276,7 +276,7 @@ async def test_get_depends_verify_method(body: TgToChatListRequestBody):
 
 @app.get("/tg/api/v1/rss/search")
 @apiutils.atimeit
-async def rss_search(keyword: str, sign: str, chat_ids: str = "", limit: int = 50):
+async def rss_search(keyword: str, sign: str, limit: int = 50):
     """
     RSS search endpoint for ani player.
 
@@ -290,19 +290,11 @@ async def rss_search(keyword: str, sign: str, chat_ids: str = "", limit: int = 5
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid sign")
 
         param = configParse.get_TgToFileSystemParameter()
-        sign_info = clients_mgr.parse_sign(sign)
-        client_id = TgFileSystemClientManager.get_sign_client_id(sign_info)
-        client = await clients_mgr.get_client_force(client_id)
 
-        # Parse chat_ids
-        chat_id_list = []
-        if chat_ids:
-            chat_id_list = [int(c.strip()) for c in chat_ids.split(",") if c.strip()]
-
-        # Search from database
+        # Search from database (no chat_id filter - search all)
         db = UserManager()
         results = db.get_msg_by_chat_id_and_keyword(
-            chat_ids=chat_id_list,
+            chat_ids=[],  # Empty = search all
             keyword=keyword,
             limit=limit,
         )
@@ -361,40 +353,41 @@ async def rss_search(keyword: str, sign: str, chat_ids: str = "", limit: int = 5
         return Response(f"<error>{err}</error>", media_type="application/xml", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
-@app.get("/tg/api/v1/ani/source")
+@app.get("/tg/api/v1/ani/source/{api_key}")
 @apiutils.atimeit
-async def ani_source(name: str = "TgToFileSystem", chat_ids: str = ""):
+async def ani_source(api_key: str):
     """
-    Generate ani player media source config with permanent sign.
+    Generate ani player media source config.
 
-    No sign required - auto-generates a long-term valid sign from configured client.
-    Returns JSON format that can be directly imported to ani player.
+    Requires api_key in path (random string configured in config.toml).
+    Returns JSON with 24h valid sign for RSS search.
     """
     try:
-        clients_mgr = TgFileSystemClientManager.get_instance()
         param = configParse.get_TgToFileSystemParameter()
 
-        # Get client for generating permanent sign
-        target_client_name = param.base.permanent_sign_client
-        if not target_client_name:
-            # Use first available client if not configured
-            clients_status = await clients_mgr.get_status()
-            if not clients_status or len(clients_status) == 0:
-                raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="No available clients")
-            target_client_name = clients_status[0].get("name", "")
+        # Verify api_key
+        if not param.base.ani_api_key or api_key != param.base.ani_api_key:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid API key")
 
-        # Generate long-term sign (10 years by default)
-        valid_years = param.base.permanent_sign_years or 10
-        valid_seconds = valid_years * 365 * 24 * 3600
-        permanent_sign = clients_mgr.generate_sign(
+        clients_mgr = TgFileSystemClientManager.get_instance()
+
+        # Get first available client
+        clients_status = await clients_mgr.get_status()
+        if not clients_status or len(clients_status) == 0:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="No available clients")
+
+        target_client_name = clients_status[0].get("name", "")
+
+        # Generate 24h valid sign
+        sign = clients_mgr.generate_sign(
             client_id=target_client_name,
             sign_type=EnumSignLevel.NORMAL,
-            valid_seconds=valid_seconds,
+            valid_seconds=-1,  # 24h default
         )
-        logger.info(f"Generated permanent sign for '{target_client_name}', valid for {valid_years} years")
+        logger.info(f"Generated 24h sign for ani player, client: {target_client_name}")
 
         # Build search URL template with {keyword} placeholder for ani player
-        search_url_template = f"{param.base.exposed_url}/tg/api/v1/rss/search?keyword={{keyword}}&sign={permanent_sign}&chat_ids={chat_ids}&limit=50"
+        search_url_template = f"{param.base.exposed_url}/tg/api/v1/rss/search?keyword={{keyword}}&sign={sign}&limit=50"
 
         source_config = {
             "exportedMediaSourceDataList": {
@@ -403,8 +396,8 @@ async def ani_source(name: str = "TgToFileSystem", chat_ids: str = ""):
                         "factoryId": "rss",
                         "version": 1,
                         "arguments": {
-                            "name": name,
-                            "description": f"Telegram media from TgToFileSystem (valid for {valid_years} years)",
+                            "name": "TgToFileSystem",
+                            "description": "Telegram media from TgToFileSystem (sign valid for 24h)",
                             "iconUrl": f"{param.base.exposed_url}/favicon.ico",
                             "searchConfig": {
                                 "searchUrl": search_url_template,
@@ -419,6 +412,8 @@ async def ani_source(name: str = "TgToFileSystem", chat_ids: str = ""):
 
         return Response(json.dumps(source_config, ensure_ascii=False), media_type="application/json", status_code=status.HTTP_200_OK)
 
+    except HTTPException:
+        raise
     except Exception as err:
         logger.error(f"{err=},{traceback.format_exc()}")
         return Response(json.dumps({"error": str(err)}), status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
