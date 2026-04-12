@@ -281,20 +281,28 @@ async def rss_search(keyword: str, sign: str, limit: int = 50):
     RSS search endpoint for ani player.
 
     Returns RSS XML format with search results.
-    ani player will parse episode info from title.
+    Uses client's whitelist_chat from sign for search scope.
     """
     try:
-        # Verify sign
+        # Verify sign and get client
         clients_mgr = TgFileSystemClientManager.get_instance()
         if not clients_mgr.verify_sign(sign):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid sign")
 
         param = configParse.get_TgToFileSystemParameter()
 
-        # Search from database (no chat_id filter - search all)
+        # Get client_id from sign
+        sign_info = clients_mgr.parse_sign(sign)
+        client_id = TgFileSystemClientManager.get_sign_client_id(sign_info)
+        client = await clients_mgr.get_client_force(client_id)
+
+        # Use client's whitelist_chat for search scope
+        chat_ids = client.client_param.whitelist_chat
+
+        # Search from database
         db = UserManager()
         results = db.get_msg_by_chat_id_and_keyword(
-            chat_ids=[],  # Empty = search all
+            chat_ids=chat_ids,
             keyword=keyword,
             limit=limit,
         )
