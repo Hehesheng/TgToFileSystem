@@ -8,9 +8,11 @@ __pycache__
 *.session.sql
 *.toml
 *.db
-*.service
 *.pem
 log
 cache_media
 tmp
 logs
+backend/db/*
+test/
+CLAUDE.md

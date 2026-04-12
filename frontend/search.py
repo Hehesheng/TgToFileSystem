@@ -8,7 +8,7 @@ import utils
 import remote_api as api
 
 
-@st.experimental_fragment
+@st.fragment
 def loop(sign: str):
     if "page_index" not in st.session_state:
         st.session_state.page_index = 1
@@ -24,7 +24,7 @@ def loop(sign: str):
     if "search_res_limit" not in st.query_params:
         st.query_params.search_res_limit = "10"
 
-    @st.experimental_fragment
+    @st.fragment
     def search_container(keyword, res_limit, isorder):
         if "chat_dict" not in st.session_state:
             wait_client_ready = st.empty()
@@ -65,7 +65,7 @@ def loop(sign: str):
     if st.session_state.force_skip:
         st.session_state.force_skip = False
 
-    @st.experimental_fragment
+    @st.fragment
     def do_search_req():
         search_limit = int(st.query_params.search_res_limit)
         offset_index = (st.session_state.page_index - 1) * search_limit
@@ -128,7 +128,7 @@ def loop(sign: str):
             popover_columns[2].link_button("⬇️Download Link", url, use_container_width=True)
             popover_columns[2].link_button("🔗Telegram Link", src_link, use_container_width=True)
 
-        @st.experimental_fragment
+        @st.fragment
         def show_search_res(res: dict[str, any]):
             search_res_list = res.get("list")
             if search_res_list is None or len(search_res_list) == 0:

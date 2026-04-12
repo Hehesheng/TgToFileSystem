@@ -11,7 +11,7 @@ def loop():
         res = api.convert_tg_link_to_proxy_link(input_link)
     st.text_area("Convert res text area", value=res, label_visibility="hidden")
     # preview convert link
-    @st.experimental_fragment
+    @st.fragment
     def _inner():
         container = st.container()
         if container.button("Preview", key=f"convertLinkPreviewBtn", use_container_width=True):

@@ -2,6 +2,7 @@
 salt = "AnyTokenYouWanted"
 port = 7777
 timeit_enable = false
+exposed_url = "http://127.0.0.1:7777"
 
 [tgApi]
 api_id = int_app_id_from_tg
@@ -12,3 +13,13 @@ enable = false
 proxy_type = "socks5"
 addr = "172.25.32.1"
 port = 7890
+
+[web]
+enable = true
+name = "default"
+port = 2000
+
+[[clients]]
+name = "default"
+interval = 0.1
+whitelist_chat = [123456789, -1001234567890]

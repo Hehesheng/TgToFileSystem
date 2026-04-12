@@ -2,10 +2,10 @@ import asyncio
 import time
 import base64
 import hashlib
-import rsa
+import hmac
 import os
+import threading
 from enum import IntEnum, unique, auto
-import time
 import traceback
 import logging
 
@@ -15,6 +15,9 @@ from backend.MediaCacheManager import MediaChunkHolderManager
 import configParse
 
 logger = logging.getLogger(__file__.split("/")[-1])
+
+# Thread lock for singleton initialization
+_instance_lock = threading.Lock()
 
 
 @unique
@@ -26,20 +29,21 @@ class EnumSignLevel(IntEnum):
 
 
 class TgFileSystemClientManager(object):
-    TIME_MS_24HOURS: int = 24 * 60 * 60 * 1000
+    TIME_SECONDS_24H: int = 24 * 60 * 60  # 24 hours in seconds
+    SIGNATURE_LENGTH: int = 32  # 32 hex chars = 128 bits security
     MAX_MANAGE_CLIENTS: int = 10
     is_init: bool = False
     param: configParse.TgToFileSystemParameter
     clients: dict[str, TgFileSystemClient] = {}
-    # rsa key
-    cache_sign: str
-    public_key: rsa.PublicKey
-    private_key: rsa.PrivateKey
+    secret_key: bytes
 
     @classmethod
     def get_instance(cls):
+        """Thread-safe singleton getter."""
         if not hasattr(TgFileSystemClientManager, "_instance"):
-            TgFileSystemClientManager._instance = TgFileSystemClientManager(configParse.get_TgToFileSystemParameter())
+            with _instance_lock:
+                if not hasattr(TgFileSystemClientManager, "_instance"):
+                    TgFileSystemClientManager._instance = TgFileSystemClientManager(configParse.get_TgToFileSystemParameter())
         return TgFileSystemClientManager._instance
 
     def __init__(self, param: configParse.TgToFileSystemParameter) -> None:
@@ -47,7 +51,7 @@ class TgFileSystemClientManager(object):
         self.db = UserManager()
         self.loop = asyncio.get_running_loop()
         self.media_chunk_manager = MediaChunkHolderManager()
-        self._init_rsa_keys()
+        self._init_secret_key()
         if self.loop.is_running():
             self.loop.create_task(self._start_clients())
         else:
@@ -57,7 +61,6 @@ class TgFileSystemClientManager(object):
         self.clients.clear()
 
     async def _start_clients(self) -> None:
-        # init cache clients
         for client_config in self.param.clients:
             client = self.create_client(client_config.name)
             self._register_client(client)
@@ -69,99 +72,175 @@ class TgFileSystemClientManager(object):
                 logger.warning(f"start client: {err=}, {traceback.format_exc()}")
         self.is_init = True
 
-    def _init_rsa_keys(self):
+    def _init_secret_key(self):
+        """Initialize HMAC secret key from file or generate new one."""
         key_dir = f"{os.path.dirname(__file__)}/db"
-        pub_key_path = f"{key_dir}/pub.pem"
-        pri_key_path = f"{key_dir}/pri.pem"
-        if not os.path.isfile(pub_key_path) or not os.path.isfile(pri_key_path):
-            self.public_key, self.private_key = rsa.newkeys(512)
-            with open(pub_key_path, "wb") as f:
-                f.write(self.public_key.save_pkcs1())
-            with open(pri_key_path, "wb") as f:
-                f.write(self.private_key.save_pkcs1())
-        else:
-            with open(pub_key_path, "rb") as f:
-                self.public_key = rsa.PublicKey.load_pkcs1(f.read())
-            with open(pri_key_path, "rb") as f:
-                self.private_key = rsa.PrivateKey.load_pkcs1(f.read())
+        key_path = f"{key_dir}/hmac_key.bin"
+        try:
+            with open(key_path, "rb") as f:
+                self.secret_key = f.read()
+            logger.info("Loaded existing HMAC secret key")
+        except FileNotFoundError:
+            self.secret_key = os.urandom(32)  # 256-bit key
+            with open(key_path, "wb") as f:
+                f.write(self.secret_key)
+            logger.info("Generated new HMAC secret key")
+
+    def _b64encode_safe(self, data: str) -> str:
+        """URL-safe base64 encoding without padding."""
+        encoded = base64.urlsafe_b64encode(data.encode()).decode()
+        return encoded.rstrip("=")
+
+    def _b64decode_safe(self, data: str) -> str:
+        """URL-safe base64 decoding with padding restoration."""
+        padding_needed = (4 - len(data) % 4) % 4
+        data += "=" * padding_needed
+        return base64.urlsafe_b64decode(data).decode()
 
     def generate_sign(
-        self, client_id: str, sign_type: EnumSignLevel = EnumSignLevel.NORMAL, salt: str = None, valid_time: int = -1
+        self,
+        client_id: str,
+        sign_type: EnumSignLevel = EnumSignLevel.NORMAL,
+        valid_seconds: int = -1,
     ) -> str:
-        timestamp = int(time.time())
-        if valid_time == -1:
-            timestamp += self.TIME_MS_24HOURS
-        elif valid_time == 0:
-            timestamp = 0
+        """
+        Generate HMAC-SHA256 based signature.
+
+        Token format: base64(payload|h=signature)
+        payload: ts={expire_ts}|id={client_id_b64}|l={level}
+        signature: HMAC-SHA256(payload, secret_key)[:32]
+
+        Args:
+            client_id: Client identifier
+            sign_type: Sign level (ADMIN/NORMAL/VIST)
+            valid_seconds: Token validity in seconds (-1=24h, must be >0)
+
+        Returns:
+            URL-safe base64 encoded token (~90 chars)
+
+        Raises:
+            ValueError: If valid_seconds <= 0 (except -1 for default)
+        """
+        # Calculate expiration timestamp (always expires)
+        current_ts = int(time.time())
+        if valid_seconds == -1:
+            expire_ts = current_ts + self.TIME_SECONDS_24H
+        elif valid_seconds <= 0:
+            raise ValueError(f"valid_seconds must be positive or -1, got {valid_seconds}")
         else:
-            timestamp += valid_time * 1000
-        need_encrypt_str = f"ts={timestamp};l={sign_type.value};"
-        if salt:
-            need_encrypt_str += f"s={hashlib.md5(salt).hexdigest()[:8]};"
-        # rsa 512 bits only
-        valid_len = 512 // 8 - 11
-        valid_len -= len(need_encrypt_str)
-        # id=xxxxx;
-        valid_len -= len("id=;")
-        if valid_len < 0:
-            logger.error(f"{need_encrypt_str=},{traceback.format_exc()}")
-            raise RuntimeError(f"generate sign too big")
-        real_client_id = client_id[:valid_len]
-        if len(real_client_id) != len(client_id):
-            logger.warning(f"client id too long: {client_id} -> {real_client_id}")
-        need_encrypt_str += f"id={real_client_id};"
-        need_encrypt_bin = need_encrypt_str.encode()
-        sign_bin = rsa.encrypt(need_encrypt_bin, self.public_key)
-        sign = base64.b64encode(sign_bin).decode()
-        sign = sign.replace("+", "-")
-        sign = sign.replace("/", "_")
-        logger.info(f"generate {sign_type.name} sign: {sign}")
+            expire_ts = current_ts + valid_seconds
+
+        # Encode client_id to avoid special characters in payload
+        encoded_id = self._b64encode_safe(client_id) if client_id else ""
+
+        # Build payload
+        payload = f"ts={expire_ts}|id={encoded_id}|l={sign_type.value}"
+
+        # Generate HMAC signature (128 bits for adequate security)
+        hmac_sig = hmac.new(self.secret_key, payload.encode(), hashlib.sha256).hexdigest()[:self.SIGNATURE_LENGTH]
+
+        # Combine and encode
+        full_token = f"{payload}|h={hmac_sig}"
+        sign = self._b64encode_safe(full_token)
+
+        logger.info(f"generate {sign_type.name} sign for {client_id}: expires={expire_ts}")
         return sign
 
-    def parse_sign(self, sign: str) -> dict[str, any] | None:
-        sign = sign.replace("-", "+")
-        sign = sign.replace("_", "/")
+    def parse_sign(self, sign: str) -> dict | None:
+        """
+        Parse and verify HMAC signature.
+
+        Args:
+            sign: URL-safe base64 encoded token
+
+        Returns:
+            Dict with ts, id, l fields if valid, None otherwise
+        """
         try:
-            res_dict = {}
-            sign_bin = base64.b64decode(sign)
-            decrypt_bin = rsa.decrypt(sign_bin, self.private_key)
-            decrypt_str = decrypt_bin.decode()
-            for key_value_str in decrypt_str.split(";"):
-                if key_value_str == "":
-                    continue
-                key, value = key_value_str.split("=")
-                res_dict[key] = value
+            full_token = self._b64decode_safe(sign)
+
+            # Split payload and signature
+            if "|h=" not in full_token:
+                logger.warning("Invalid sign format: missing signature")
+                return None
+
+            payload, provided_sig = full_token.rsplit("|h=", 1)
+
+            # Verify HMAC signature
+            expected_sig = hmac.new(self.secret_key, payload.encode(), hashlib.sha256).hexdigest()[:self.SIGNATURE_LENGTH]
+            if not hmac.compare_digest(provided_sig, expected_sig):
+                logger.warning("HMAC signature mismatch")
+                return None
+
+            # Parse payload
+            res = {}
+            for part in payload.split("|"):
+                if "=" in part:
+                    key, value = part.split("=", 1)
+                    if key == "id" and value:
+                        value = self._b64decode_safe(value)  # Decode client_id
+                    res[key] = value
+
+            # Validate required fields
+            if "ts" not in res or "id" not in res or "l" not in res:
+                logger.warning("Missing required fields in sign")
+                return None
+
+            return res
+
         except Exception as err:
-            logger.warning(f"verify sign {err=}, {traceback.format_exc()}")
+            logger.warning(f"parse sign error: {err=}")
             return None
-        return res_dict
 
     @staticmethod
-    def get_sign_client_id(key_map: dict[str, any]) -> str:
+    def get_sign_client_id(key_map: dict) -> str | None:
         return key_map.get("id")
 
     def verify_sign(
         self,
         sign: str,
         client_id: str = None,
-        v_ts: bool = True,
         target_level: EnumSignLevel = EnumSignLevel.NONE,
-        salt: str = None,
     ) -> bool:
+        """
+        Verify signature and check constraints.
+
+        Args:
+            sign: Token to verify
+            client_id: Expected client_id prefix match
+            target_level: Minimum required sign level
+
+        Returns:
+            True if valid and not expired, False otherwise
+        """
         key_map = self.parse_sign(sign)
         if not key_map:
             return False
-        if client_id and (not key_map.get("id") or not client_id.startswith(key_map.get("id"))):
+
+        # Check client_id prefix match
+        if client_id:
+            sign_client_id = key_map.get("id", "")
+            if not sign_client_id or not client_id.startswith(sign_client_id):
+                logger.warning(f"client_id '{client_id}' does not start with expected prefix '{sign_client_id}'")
+                return False
+
+        # Check sign level (smaller number = higher privilege)
+        # ADMIN=1 > NORMAL=2 > VIST=3 > NONE=4
+        # Sign must have level <= target (higher or equal privilege)
+        sign_level = int(key_map.get("l", 0))
+        if sign_level > target_level.value:
+            logger.warning(f"level mismatch: sign level {sign_level} insufficient for required level {target_level.value}")
             return False
-        if not key_map.get("l") or target_level.value < int(key_map.get("l")):
+
+        # Always check expiration (token must have lifetime)
+        expire_ts = int(key_map.get("ts", 0))
+        if expire_ts <= 0 or time.time() > expire_ts:
+            logger.warning(f"sign expired or invalid ts: {expire_ts}")
             return False
-        if v_ts and int(key_map.get("ts", 0)) > 0 and (int(time.time()) - int(key_map.get("ts", 0)) > 0):
-            return False
-        if salt and hashlib.md5(key_map.get("s", "")).hexdigest() != salt:
-            return False
+
         return True
 
-    async def get_status(self) -> dict[str, any]:
+    async def get_status(self) -> dict:
         clients_status = [
             {"status": client.is_valid(), "name": client.session_name, "sign": self.generate_sign(client.session_name)}
             for _, client in self.clients.items()
@@ -176,26 +255,24 @@ class TgFileSystemClientManager(object):
         return ""
 
     def check_client_session_exist(self, client_id: str) -> bool:
-        session_db_file = f"{os.path.dirname(__file__)}/db/{client_id}.session"
-        return os.path.isfile(session_db_file)
+        session_file = f"{os.path.dirname(__file__)}/db/{client_id}.session"
+        return os.path.isfile(session_file)
 
     def create_client(self, client_id: str) -> TgFileSystemClient:
-        client = TgFileSystemClient(client_id, self.param, self.db, self.media_chunk_manager)
-        return client
+        return TgFileSystemClient(client_id, self.param, self.db, self.media_chunk_manager)
 
     def _register_client(self, client: TgFileSystemClient) -> bool:
         self.clients[client.session_name] = client
         return True
 
     def _unregister_client(self, client_id: str) -> bool:
-        self.clients.pop(client_id)
+        self.clients.pop(client_id, None)
         return True
 
-    def get_client(self, client_id: str) -> TgFileSystemClient:
-        client = self.clients.get(client_id)
-        return client
+    def get_client(self, client_id: str) -> TgFileSystemClient | None:
+        return self.clients.get(client_id)
 
-    def get_first_client(self) -> TgFileSystemClient:
+    def get_first_client(self) -> TgFileSystemClient | None:
         for client in self.clients.values():
             return client
         return None
@@ -205,7 +282,7 @@ class TgFileSystemClientManager(object):
         if client is None:
             if not self.check_client_session_exist(client_id):
                 raise RuntimeError("Client session does not found.")
-            client = self.create_client(client_id=client_id)
+            client = self.create_client(client_id)
         if not client.is_valid():
             await client.start()
             self._register_client(client)

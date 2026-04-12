@@ -109,16 +109,19 @@ async def search_tg_file_list(body: TgToFileListRequestBody):
 async def get_tg_file_list(body: TgToFileListRequestBody):
     try:
         clients_mgr = TgFileSystemClientManager.get_instance()
+        param = configParse.get_TgToFileSystemParameter()
         res = hints.TotalList()
         res_type = "chat"
-        client = await clients_mgr.get_client_force(body.token)
+        sign_info = clients_mgr.parse_sign(body.sign)
+        client_id = TgFileSystemClientManager.get_sign_client_id(sign_info)
+        client = await clients_mgr.get_client_force(client_id)
         res_dict = []
         if body.search != "":
             res = await client.get_messages_by_search(
-                body.chat_id, search_word=body.search, limit=body.length, offset=body.index, inner_search=body.inner
+                int(sign_info.get("chat_id", 0)), search_word=body.search, limit=body.length, offset=body.index, inner_search=body.inner
             )
         else:
-            res = await client.get_messages(body.chat_id, limit=body.length, offset=body.index)
+            res = await client.get_messages(int(sign_info.get("chat_id", 0)), limit=body.length, offset=body.index)
         res_type = "msg"
         for item in res:
             file_name = apiutils.get_message_media_name(item)
@@ -127,12 +130,15 @@ async def get_tg_file_list(body: TgToFileListRequestBody):
             msg_info = json.loads(item.to_json())
             msg_info["file_name"] = file_name
             msg_info["download_url"] = (
-                f"{param.base.exposed_url}/tg/api/v1/file/get/{body.chat_id}/{item.id}/{quote(file_name)}?sign={body.token}"
+                f"{param.base.exposed_url}/tg/api/v1/file/get/{item.chat_id}/{item.id}/{quote(file_name)}?sign={body.sign}"
             )
             res_dict.append(msg_info)
 
+        client_dict = json.loads(client.to_json())
+        client_dict["sign"] = body.sign
+
         response_dict = {
-            "client": json.loads(client.to_json()),
+            "client": client_dict,
             "type": res_type,
             "length": len(res_dict),
             "list": res_dict,

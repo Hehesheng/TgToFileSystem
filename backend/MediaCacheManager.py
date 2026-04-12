@@ -6,7 +6,6 @@ import collections
 import asyncio
 import traceback
 import hashlib
-import collections
 from typing import Union, Optional
 
 import diskcache

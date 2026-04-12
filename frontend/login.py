@@ -7,7 +7,7 @@ import qrcode
 import utils
 import remote_api as api
 
-@st.experimental_fragment
+@st.fragment
 def loop():
     url = api.login_client_by_qr_code_url()
 

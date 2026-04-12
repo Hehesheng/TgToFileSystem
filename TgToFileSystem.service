@@ -1,0 +1,13 @@
+[Unit]
+Description=telegram message convert to file system
+After=network.target
+Wants=network.target
+
+[Service]
+User=ubuntu
+Type=simple
+WorkingDirectory=/home/ubuntu/TgToFileSystem
+ExecStart=bash ./run.sh
+
+[Install]
+WantedBy=multi-user.target

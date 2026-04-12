@@ -99,7 +99,7 @@ def _sort_message_media_photo_thumbs(thumbs: list[any]) -> list[any]:
         # Empty size or invalid should go last
         return 0, 0
 
-    thumbs = list(sorted(thumbs), key=sort_thumbs)
+    thumbs = sorted(thumbs, key=sort_thumbs)
     for i in reversed(range(len(thumbs))):
         if isinstance(thumbs[i], types.PhotoPathSize):
             thumbs.pop(i)
