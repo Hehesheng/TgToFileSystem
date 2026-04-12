@@ -11,6 +11,8 @@ class TgToFileSystemParameter(BaseModel):
         exposed_url: str = "http://127.0.0.1:7777"
         port: int = 7777
         timeit_enable: bool = False
+        permanent_sign_client: str = ""  # client name for generating permanent sign
+        permanent_sign_years: int = 10  # sign validity in years
 
     base: BaseParameter
 

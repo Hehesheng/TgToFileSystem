@@ -4,6 +4,11 @@ port = 7777
 timeit_enable = false
 exposed_url = "http://127.0.0.1:7777"
 
+# Permanent sign for ani player RSS subscription (optional)
+# If not set, will auto-generate from first available client
+# permanent_sign_client = "default"  # client name for generating permanent sign
+# permanent_sign_years = 10  # sign validity in years (default: 10)
+
 [tgApi]
 api_id = int_app_id_from_tg
 api_hash = "api_hash_from_tg"

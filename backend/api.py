@@ -18,7 +18,7 @@ from pydantic import BaseModel
 import configParse
 from backend import apiutils
 from backend import api_implement as api
-from backend.TgFileSystemClientManager import TgFileSystemClientManager
+from backend.TgFileSystemClientManager import TgFileSystemClientManager, EnumSignLevel
 from backend.UserManager import UserManager
 
 logger = logging.getLogger(__file__.split("/")[-1])
@@ -363,24 +363,38 @@ async def rss_search(keyword: str, sign: str, chat_ids: str = "", limit: int = 5
 
 @app.get("/tg/api/v1/ani/source")
 @apiutils.atimeit
-async def ani_source(sign: str, name: str = "TgToFileSystem", chat_ids: str = ""):
+async def ani_source(name: str = "TgToFileSystem", chat_ids: str = ""):
     """
-    Generate ani player media source config.
+    Generate ani player media source config with permanent sign.
 
+    No sign required - auto-generates a long-term valid sign from configured client.
     Returns JSON format that can be directly imported to ani player.
     """
     try:
-        # Verify sign
         clients_mgr = TgFileSystemClientManager.get_instance()
-        if not clients_mgr.verify_sign(sign):
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid sign")
-
         param = configParse.get_TgToFileSystemParameter()
 
+        # Get client for generating permanent sign
+        target_client_name = param.base.permanent_sign_client
+        if not target_client_name:
+            # Use first available client if not configured
+            clients_status = await clients_mgr.get_status()
+            if not clients_status or len(clients_status) == 0:
+                raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="No available clients")
+            target_client_name = clients_status[0].get("name", "")
+
+        # Generate long-term sign (10 years by default)
+        valid_years = param.base.permanent_sign_years or 10
+        valid_seconds = valid_years * 365 * 24 * 3600
+        permanent_sign = clients_mgr.generate_sign(
+            client_id=target_client_name,
+            sign_type=EnumSignLevel.NORMAL,
+            valid_seconds=valid_seconds,
+        )
+        logger.info(f"Generated permanent sign for '{target_client_name}', valid for {valid_years} years")
+
         # Build search URL template with {keyword} placeholder for ani player
-        search_url_template = f"{param.base.exposed_url}/tg/api/v1/rss/search?keyword={keyword}&sign={sign}&chat_ids={chat_ids}&limit=50"
-        # Replace keyword variable with placeholder
-        search_url_template = f"{param.base.exposed_url}/tg/api/v1/rss/search?keyword={{keyword}}&sign={sign}&chat_ids={chat_ids}&limit=50"
+        search_url_template = f"{param.base.exposed_url}/tg/api/v1/rss/search?keyword={{keyword}}&sign={permanent_sign}&chat_ids={chat_ids}&limit=50"
 
         source_config = {
             "exportedMediaSourceDataList": {
@@ -390,7 +404,7 @@ async def ani_source(sign: str, name: str = "TgToFileSystem", chat_ids: str = ""
                         "version": 1,
                         "arguments": {
                             "name": name,
-                            "description": "Telegram media from TgToFileSystem",
+                            "description": f"Telegram media from TgToFileSystem (valid for {valid_years} years)",
                             "iconUrl": f"{param.base.exposed_url}/favicon.ico",
                             "searchConfig": {
                                 "searchUrl": search_url_template,
