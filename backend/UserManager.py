@@ -723,95 +723,143 @@ class UserManager(object):
             return {}
 
     def migrate_to_compact(
-        self, batch_size: int = 1000, limit: int = None, progress_callback=None
+        self,
+        limit: int = None,
+        progress_callback=None,
+        fetch_batch_size: int = 100,
+        start_date: int = None,
+        batch_callback=None,
     ) -> dict:
         """
         Migrate old msg_js format to compact format.
 
         Args:
-            batch_size: Number of records per batch
             limit: Maximum total records to migrate (None = all)
-            progress_callback: Optional callback for progress updates (called with count)
+            progress_callback: Optional callback for progress updates
+            fetch_batch_size: Number of records to fetch per batch (to limit memory)
+            start_date: Start from this date_time (for resuming interrupted migration)
+            batch_callback: Optional callback after each batch with (checked, migrated, errors, last_date)
 
         Returns:
-            Stats about migration progress
+            Stats about migration progress, including last_processed_date for resume
         """
         import re
         try:
-            # Get old format records
-            count_query = "SELECT COUNT(*) FROM message"
-            total_count = self.cur.execute(count_query).fetchone()[0]
-
-            # Find old format records (those with entities or large msg_js)
-            # Simple heuristic: msg_js length > 3000 = likely old format
-            if limit:
-                query = f"SELECT unique_id, msg_js FROM message WHERE LENGTH(msg_js) > 3000 LIMIT {limit}"
-            else:
-                query = "SELECT unique_id, msg_js FROM message WHERE LENGTH(msg_js) > 3000"
-
-            rows = self.cur.execute(query).fetchall()
-            to_migrate = len(rows)
-
-            logger.info(f"Found {to_migrate} old format records to migrate")
+            # Get total count for progress tracking
+            total_count = self.cur.execute("SELECT COUNT(*) FROM message").fetchone()[0]
 
             migrated = 0
             errors = 0
+            checked = 0
+            last_date = start_date
 
-            for i, (unique_id, msg_js) in enumerate(rows):
-                try:
-                    old_data = json.loads(msg_js)
+            logger.info(f"Starting migration, total records: {total_count}, start_date: {start_date}")
 
-                    # Create compact version from old data
-                    compact = {
-                        "id": old_data.get("id"),
-                        "peer_id": old_data.get("peer_id"),
-                        "date": old_data.get("date"),
-                    }
+            while True:
+                # Fetch batch using date filter (avoids re-checking processed data)
+                fetch_limit = min(fetch_batch_size, limit - migrated if limit else fetch_batch_size)
+                if fetch_limit <= 0:
+                    break
 
-                    # Compact media if exists
-                    if old_data.get("media"):
-                        compact["media"] = self._compact_media_from_dict(old_data["media"])
+                # Query with date filter: get records after last processed date
+                if last_date is None:
+                    query = "SELECT unique_id, msg_js, date_time FROM message ORDER BY date_time ASC LIMIT ?"
+                    rows = self.cur.execute(query, (fetch_limit,)).fetchall()
+                else:
+                    query = "SELECT unique_id, msg_js, date_time FROM message WHERE date_time > ? ORDER BY date_time ASC LIMIT ?"
+                    rows = self.cur.execute(query, (last_date, fetch_limit)).fetchall()
 
-                    compact_js = json.dumps(compact, ensure_ascii=False)
+                if not rows:
+                    break
 
-                    # Update record
-                    self.cur.execute(
-                        "UPDATE message SET msg_js = ? WHERE unique_id = ?",
-                        (compact_js, unique_id),
-                    )
+                batch_max_date = None
+                for unique_id, msg_js, date_time in rows:
+                    checked += 1
+                    batch_max_date = date_time
 
-                    # Also update FTS
-                    msg_ctx = old_data.get("message", "")
-                    file_name = self._extract_file_name_from_dict(old_data.get("media"))
-                    msg_ctx_fts = re.sub(r'\s+', '', msg_ctx or "")
-                    file_name_fts = re.sub(r'\s+', '', file_name or "")
-                    self.cur.execute(
-                        "UPDATE OR REPLACE message_fts SET msg_ctx = ?, file_name = ? WHERE unique_id = ?",
-                        (msg_ctx_fts, file_name_fts, unique_id),
-                    )
+                    # Skip if already compact format
+                    if self.is_compact_format(msg_js):
+                        continue
 
-                    migrated += 1
+                    try:
+                        old_data = json.loads(msg_js)
 
-                    if progress_callback:
-                        progress_callback(1)
+                        # Create compact version from old data
+                        compact = {
+                            "id": old_data.get("id"),
+                            "peer_id": old_data.get("peer_id"),
+                            "date": old_data.get("date"),
+                        }
 
-                    # Commit in batches
-                    if (i + 1) % batch_size == 0:
-                        self.con.commit()
-                        logger.info(f"Migrated {migrated}/{to_migrate} records")
+                        # Compact media if exists
+                        if old_data.get("media"):
+                            compact["media"] = self._compact_media_from_dict(old_data["media"])
 
-                except Exception as err:
-                    errors += 1
-                    logger.warning(f"Migration error for {unique_id}: {err}")
+                        compact_js = json.dumps(compact, ensure_ascii=False)
 
+                        # Update record
+                        self.cur.execute(
+                            "UPDATE message SET msg_js = ? WHERE unique_id = ?",
+                            (compact_js, unique_id),
+                        )
+
+                        # Also update FTS
+                        msg_ctx = old_data.get("message", "")
+                        file_name = self._extract_file_name_from_dict(old_data.get("media"))
+                        msg_ctx_fts = re.sub(r'\s+', '', msg_ctx or "")
+                        file_name_fts = re.sub(r'\s+', '', file_name or "")
+                        self.cur.execute(
+                            "UPDATE OR REPLACE message_fts SET msg_ctx = ?, file_name = ? WHERE unique_id = ?",
+                            (msg_ctx_fts, file_name_fts, unique_id),
+                        )
+
+                        migrated += 1
+
+                        if progress_callback:
+                            progress_callback(1)
+
+                        # Check limit
+                        if limit and migrated >= limit:
+                            self.con.commit()
+                            logger.info(f"Reached limit {limit}, stopping at date {batch_max_date}")
+                            return {
+                                "total_checked": checked,
+                                "migrated": migrated,
+                                "errors": errors,
+                                "limit_reached": True,
+                                "last_processed_date": batch_max_date,
+                            }
+
+                    except Exception as err:
+                        errors += 1
+                        logger.warning(f"Migration error for {unique_id}: {err}")
+
+                # Update last_date for next batch
+                last_date = batch_max_date
+
+                # Call batch callback for progress saving
+                if batch_callback:
+                    batch_callback(checked, migrated, errors, last_date)
+
+                # Print progress
+                progress_pct = checked / total_count * 100 if total_count > 0 else 0
+                msg = f"Progress: {checked}/{total_count} ({progress_pct:.1f}%) | migrated: {migrated} | errors: {errors} | last_date: {last_date}"
+                logger.info(msg)
+                print(msg)
+
+                # Stop if we've processed all records
+                if checked >= total_count:
+                    break
+
+            # Final commit when all done
             self.con.commit()
             logger.info(f"Migration complete: {migrated} records, {errors} errors")
 
             return {
-                "total_found": to_migrate,
+                "total_checked": checked,
                 "migrated": migrated,
                 "errors": errors,
-                "remaining": to_migrate - migrated,
+                "last_processed_date": last_date,
             }
 
         except Exception as err:
