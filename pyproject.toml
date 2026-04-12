@@ -1,0 +1,16 @@
+[project]
+name = "tgtofilesystem"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "diskcache>=5.6.3",
+    "fastapi>=0.135.3",
+    "httpx>=0.28.1",
+    "qrcode>=8.2",
+    "streamlit>=1.56.0",
+    "telethon>=1.43.0",
+    "toml>=0.10.2",
+    "uvicorn[standard]>=0.44.0",
+]

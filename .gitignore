@@ -6,7 +6,7 @@ __pycache__
 *.session-journal
 *-journal
 *.session.sql
-*.toml
+config.toml
 *.db
 *.pem
 log
