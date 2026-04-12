@@ -6,6 +6,7 @@ import logging
 import traceback
 from typing import Annotated
 from urllib.parse import quote
+from datetime import datetime
 
 import uvicorn
 from fastapi import FastAPI, status, Request, Depends, HTTPException
@@ -18,6 +19,7 @@ import configParse
 from backend import apiutils
 from backend import api_implement as api
 from backend.TgFileSystemClientManager import TgFileSystemClientManager
+from backend.UserManager import UserManager
 
 logger = logging.getLogger(__file__.split("/")[-1])
 
@@ -270,6 +272,142 @@ async def post_verify(body: TgToChatListRequestBody | None = None):
 @app.post("/tg/api/v1/test", dependencies=[Depends(post_verify)])
 async def test_get_depends_verify_method(body: TgToChatListRequestBody):
     return Response()
+
+
+@app.get("/tg/api/v1/rss/search")
+@apiutils.atimeit
+async def rss_search(keyword: str, sign: str, chat_ids: str = "", limit: int = 50):
+    """
+    RSS search endpoint for ani player.
+
+    Returns RSS XML format with search results.
+    ani player will parse episode info from title.
+    """
+    try:
+        # Verify sign
+        clients_mgr = TgFileSystemClientManager.get_instance()
+        if not clients_mgr.verify_sign(sign):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid sign")
+
+        param = configParse.get_TgToFileSystemParameter()
+        sign_info = clients_mgr.parse_sign(sign)
+        client_id = TgFileSystemClientManager.get_sign_client_id(sign_info)
+        client = await clients_mgr.get_client_force(client_id)
+
+        # Parse chat_ids
+        chat_id_list = []
+        if chat_ids:
+            chat_id_list = [int(c.strip()) for c in chat_ids.split(",") if c.strip()]
+
+        # Search from database
+        db = UserManager()
+        results = db.get_msg_by_chat_id_and_keyword(
+            chat_ids=chat_id_list,
+            keyword=keyword,
+            limit=limit,
+        )
+
+        # Build RSS XML
+        rss_items = []
+        for row in results:
+            # row is tuple: (unique_id, user_id, chat_id, msg_id, msg_type, msg_ctx, mime_type, file_name, msg_js, date_time)
+            chat_id = row[2]
+            msg_id = row[3]
+            file_name = row[7] or "unknown.tmp"
+            msg_js = row[8]
+            date_time = row[9]
+
+            # Parse msg_js for additional info
+            try:
+                msg_info = json.loads(msg_js) if msg_js else {}
+            except:
+                msg_info = {}
+
+            download_url = f"{param.base.exposed_url}/tg/api/v1/file/get/{chat_id}/{msg_id}/{quote(file_name)}?sign={sign}"
+
+            # Format date
+            pub_date = datetime.fromtimestamp(date_time).strftime("%a, %d %b %Y %H:%M:%S +0000") if date_time else ""
+
+            # Get file size from msg_js
+            file_size = 0
+            media = msg_info.get("media", {})
+            if isinstance(media, dict):
+                file_size = media.get("size", 0)
+            size_str = f"{file_size / 1024 / 1024:.1f} MB" if file_size > 0 else ""
+
+            rss_items.append(f"""
+    <item>
+      <title>{file_name}</title>
+      <link>{download_url}</link>
+      <description>Size: {size_str}</description>
+      <pubDate>{pub_date}</pubDate>
+    </item>""")
+
+        rss_xml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>TgToFileSystem Search: {keyword}</title>
+    <link>{param.base.exposed_url}</link>
+    <description>Telegram media search results</description>
+    <language>zh-CN</language>
+{"".join(rss_items)}
+  </channel>
+</rss>"""
+
+        return Response(rss_xml, media_type="application/xml", status_code=status.HTTP_200_OK)
+
+    except Exception as err:
+        logger.error(f"{err=},{traceback.format_exc()}")
+        return Response(f"<error>{err}</error>", media_type="application/xml", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@app.get("/tg/api/v1/ani/source")
+@apiutils.atimeit
+async def ani_source(sign: str, name: str = "TgToFileSystem", chat_ids: str = ""):
+    """
+    Generate ani player media source config.
+
+    Returns JSON format that can be directly imported to ani player.
+    """
+    try:
+        # Verify sign
+        clients_mgr = TgFileSystemClientManager.get_instance()
+        if not clients_mgr.verify_sign(sign):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid sign")
+
+        param = configParse.get_TgToFileSystemParameter()
+
+        # Build search URL template with {keyword} placeholder for ani player
+        search_url_template = f"{param.base.exposed_url}/tg/api/v1/rss/search?keyword={keyword}&sign={sign}&chat_ids={chat_ids}&limit=50"
+        # Replace keyword variable with placeholder
+        search_url_template = f"{param.base.exposed_url}/tg/api/v1/rss/search?keyword={{keyword}}&sign={sign}&chat_ids={chat_ids}&limit=50"
+
+        source_config = {
+            "exportedMediaSourceDataList": {
+                "mediaSources": [
+                    {
+                        "factoryId": "rss",
+                        "version": 1,
+                        "arguments": {
+                            "name": name,
+                            "description": "Telegram media from TgToFileSystem",
+                            "iconUrl": f"{param.base.exposed_url}/favicon.ico",
+                            "searchConfig": {
+                                "searchUrl": search_url_template,
+                                "filterByEpisodeSort": True,
+                                "filterBySubjectName": True,
+                            }
+                        }
+                    }
+                ]
+            }
+        }
+
+        return Response(json.dumps(source_config, ensure_ascii=False), media_type="application/json", status_code=status.HTTP_200_OK)
+
+    except Exception as err:
+        logger.error(f"{err=},{traceback.format_exc()}")
+        return Response(json.dumps({"error": str(err)}), status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 if __name__ == "__main__":
