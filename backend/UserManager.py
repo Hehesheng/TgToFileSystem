@@ -78,18 +78,16 @@ class UserManager(object):
         limit: int = 10,
         offset: int = 0,
         inc: bool = False,
-        ignore_case: bool = False,  # FTS5 ignores case by default
     ) -> list[any]:
         """
-        Search messages using FTS5 MATCH query.
+        Search messages using FTS5 MATCH query with BM25 ranking.
 
         Args:
             chat_ids: List of chat IDs to filter
-            keyword: Search keyword (supports AND, OR, NOT operators)
+            keyword: Search keyword
             limit: Maximum results
             offset: Offset for pagination
-            inc: True for ascending order, False for descending (by relevance)
-            ignore_case: Ignored (FTS5 is case-insensitive by default)
+            inc: True for ascending by date, False for descending by relevance
 
         Returns:
             List of matching messages
@@ -109,97 +107,77 @@ class UserManager(object):
                 LIMIT ? OFFSET ?
             """
             params = tuple(chat_ids) + (limit, offset)
-            logger.info(f"SQL: {execute_script}")
             return self.cur.execute(execute_script, params)
 
         chat_placeholders = ",".join(["?"] * len(chat_ids))
-
         import re
+
         keyword_no_space = re.sub(r'\s+', '', keyword)
 
-        # Get trigrams for scoring (or single keyword for short terms)
         if len(keyword_no_space) >= 3:
-            search_trigrams = self._split_into_trigrams(keyword_no_space)
-            fts_query = self._sanitize_fts_query(keyword)
-            # Use FTS5 for initial filtering
+            # FTS5 with BM25 ranking
+            fts_query = self._build_fts_query(keyword)
+
+            # Use bm25() for relevance ranking, pagination at SQL level
+            order_clause = "date_time ASC" if inc else "bm25(message_fts) ASC"
             execute_script = f"""
-                SELECT m.* FROM message m
+                SELECT m.*, bm25(message_fts) as score
+                FROM message m
                 JOIN message_fts f ON m.unique_id = f.unique_id
                 WHERE m.chat_id IN ({chat_placeholders})
                 AND message_fts MATCH ?
+                ORDER BY {order_clause}
+                LIMIT ? OFFSET ?
             """
-            params = tuple(chat_ids) + (fts_query,)
+            params = tuple(chat_ids) + (fts_query, limit, offset)
             logger.info(f"FTS query: {fts_query}")
+
+            results = self.cur.execute(execute_script, params).fetchall()
+            # Return without score column
+            return [r[:-1] for r in results]
+
         else:
-            # Short keyword: scan all messages (no FTS, use LIKE logic)
-            search_trigrams = [keyword_no_space]
+            # Short keyword: LIKE scan with pagination
             execute_script = f"""
                 SELECT * FROM message
                 WHERE chat_id IN ({chat_placeholders})
                 AND (msg_ctx LIKE ? OR file_name LIKE ?)
+                ORDER BY date_time DESC
+                LIMIT ? OFFSET ?
             """
-            params = tuple(chat_ids) + (f"%{keyword_no_space}%", f"%{keyword_no_space}%")
+            params = tuple(chat_ids) + (f"%{keyword_no_space}%", f"%{keyword_no_space}%", limit, offset)
             logger.info(f"LIKE scan for short keyword: {keyword_no_space}")
+            return self.cur.execute(execute_script, params)
 
-        # Fetch results for scoring
-        raw_results = self.cur.execute(execute_script, params).fetchall()
-
-        # Score and sort results by trigram match count
-        scored_results = []
-        for row in raw_results:
-            msg_ctx = row[5] or ""
-            file_name = row[7] or ""
-            combined_text = re.sub(r'\s+', '', msg_ctx + file_name)
-
-            # Calculate match score: count how many trigrams match
-            match_count = sum(1 for tg in search_trigrams if tg in combined_text)
-            if match_count == 0:
-                continue  # Skip non-matching results (from OR query noise)
-
-            date_time = row[9]
-            scored_results.append((match_count, date_time, row))
-
-        # Sort: higher match_count first, then by date (inc/desc)
-        if inc:
-            scored_results.sort(key=lambda x: (-x[0], x[1]))
-        else:
-            scored_results.sort(key=lambda x: (-x[0], -x[1]))
-
-        # Apply offset and limit
-        final_results = [r[2] for r in scored_results[offset:offset + limit]]
-        return final_results
-
-    def _sanitize_fts_query(self, keyword: str) -> str:
+    def _build_fts_query(self, keyword: str) -> str:
         """
-        Sanitize and format keyword for FTS5 MATCH query.
+        Build FTS5 MATCH query from keyword.
 
-        For Chinese text, removes spaces and splits into trigram segments
-        to handle cases like "金牌得主第二季" matching "金牌得主 第二季".
+        For Chinese: remove spaces and use OR of trigrams (BM25 will rank better matches higher).
+        For non-Chinese: phrase match preserving spaces.
         """
         import re
 
         keyword = keyword.strip()
-        keyword = keyword.replace('"', '""')
 
-        # Check if contains Chinese characters
+        # Check if contains Chinese
         has_chinese = bool(re.search(r'[\u4e00-\u9fff]', keyword))
 
         if not has_chinese:
-            # Non-Chinese: simple phrase match
+            # Non-Chinese: phrase match with original spaces
+            keyword = keyword.replace('"', '""')
             return f'"{keyword}"'
 
-        # Chinese text: remove spaces and split into trigram segments
-        # This allows "金牌得主第二季" to match "金牌得主 第二季"
-        # because spaces are removed before matching
+        # Chinese: remove spaces, split into trigrams with OR
+        # BM25 will naturally rank documents matching more trigrams higher
         keyword_no_space = re.sub(r'\s+', '', keyword)
+        keyword_no_space = keyword_no_space.replace('"', '""')
 
         if len(keyword_no_space) >= 3:
-            # Split into overlapping trigrams (3-char segments)
-            # Use OR for flexible matching - any trigram match is sufficient
-            segments = self._split_into_trigrams(keyword_no_space)
-            return ' OR '.join(f'"{seg}"' for seg in segments)
+            trigrams = self._split_into_trigrams(keyword_no_space)
+            # Use OR - BM25 ranking will prioritize better matches
+            return ' OR '.join(f'"{tg}"' for tg in trigrams)
         else:
-            # Short Chinese: use LIKE fallback instead (handled upstream)
             return f'"{keyword_no_space}"'
 
     def _split_into_trigrams(self, text: str) -> list[str]:
@@ -636,24 +614,20 @@ class UserManager(object):
 
     def _sync_fts_data(self) -> None:
         """Sync existing message data to FTS table."""
-        import re
         try:
             # Check if there's data to sync
             count = self.cur.execute("SELECT COUNT(*) FROM message").fetchone()[0]
             if count == 0:
                 return
 
-            # Sync data with spaces removed for better Chinese matching
-            # SQLite doesn't support replace() in INSERT SELECT, so do it row by row
-            # Use fetchall() to avoid cursor reset during insert iteration
+            # Sync data - keep original text with spaces for better phrase matching
             rows = self.cur.execute("SELECT unique_id, msg_ctx, file_name FROM message").fetchall()
             for row in rows:
                 unique_id, msg_ctx, file_name = row
-                msg_ctx_fts = re.sub(r'\s+', '', msg_ctx or "")
-                file_name_fts = re.sub(r'\s+', '', file_name or "")
+                # Keep original text, don't remove spaces
                 self.cur.execute(
                     "INSERT OR IGNORE INTO message_fts (unique_id, msg_ctx, file_name) VALUES (?, ?, ?)",
-                    (unique_id, msg_ctx_fts, file_name_fts),
+                    (unique_id, msg_ctx or "", file_name or ""),
                 )
             self.con.commit()
             logger.info(f"Synced {count} messages to FTS table")
@@ -743,7 +717,6 @@ class UserManager(object):
         Returns:
             Stats about migration progress, including last_processed_date for resume
         """
-        import re
         try:
             # Get total count for progress tracking
             total_count = self.cur.execute("SELECT COUNT(*) FROM message").fetchone()[0]
@@ -803,14 +776,12 @@ class UserManager(object):
                             (compact_js, unique_id),
                         )
 
-                        # Also update FTS
+                        # Also update FTS (keep original text with spaces)
                         msg_ctx = old_data.get("message", "")
                         file_name = self._extract_file_name_from_dict(old_data.get("media"))
-                        msg_ctx_fts = re.sub(r'\s+', '', msg_ctx or "")
-                        file_name_fts = re.sub(r'\s+', '', file_name or "")
                         self.cur.execute(
                             "UPDATE OR REPLACE message_fts SET msg_ctx = ?, file_name = ? WHERE unique_id = ?",
-                            (msg_ctx_fts, file_name_fts, unique_id),
+                            (msg_ctx or "", file_name or "", unique_id),
                         )
 
                         migrated += 1
