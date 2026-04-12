@@ -1,4 +1,5 @@
 import os
+import json
 from enum import Enum, IntEnum, unique, auto
 import sqlite3
 import logging
@@ -264,6 +265,199 @@ class UserManager(object):
         MSG_JS = "msg_js"
         DATE_TIME = "date_time"
 
+    def _compact_msg_js(self, msg: types.Message) -> str:
+        """
+        Compact msg_js to only essential fields for storage optimization.
+
+        Reduces storage from ~5KB to ~2KB per message.
+        Removes: entities, replies, reactions, all boolean flags, etc.
+        Keeps: id, peer_id, date, media (compact version)
+        """
+        compact = {
+            "id": msg.id,
+            "peer_id": msg.peer_id.to_dict() if msg.peer_id else None,
+            "date": str(msg.date),
+        }
+
+        # Compact media
+        if msg.media:
+            compact["media"] = self._compact_media(msg.media)
+
+        return json.dumps(compact, ensure_ascii=False)
+
+    def _compact_media(self, media) -> dict:
+        """
+        Compact media to essential fields for download/preview.
+
+        For documents: keeps id, access_hash, file_reference, mime_type, size, dc_id, attributes, thumbs
+        For photos: keeps id, access_hash, file_reference, dc_id, sizes (without stripped bytes)
+        """
+        result = {"_": media.__class__.__name__}
+
+        if isinstance(media, types.MessageMediaPhoto):
+            photo = media.photo
+            if photo and isinstance(photo, types.Photo):
+                result["photo"] = {
+                    "id": photo.id,
+                    "access_hash": photo.access_hash,
+                    "file_reference": photo.file_reference.hex() if photo.file_reference else None,
+                    "dc_id": photo.dc_id,
+                    "sizes": self._compact_photo_sizes(photo.sizes),
+                }
+                # Keep video_cover if exists (for motion photo)
+                if media.video_cover:
+                    result["video_cover"] = {
+                        "id": media.video_cover.id,
+                        "access_hash": media.video_cover.access_hash,
+                        "dc_id": media.video_cover.dc_id,
+                    }
+
+        elif isinstance(media, types.MessageMediaDocument):
+            doc = media.document
+            if doc and isinstance(doc, types.Document):
+                result["document"] = {
+                    "id": doc.id,
+                    "access_hash": doc.access_hash,
+                    "file_reference": doc.file_reference.hex() if doc.file_reference else None,
+                    "dc_id": doc.dc_id,
+                    "mime_type": doc.mime_type,
+                    "size": doc.size,
+                    "attributes": self._compact_doc_attributes(doc.attributes),
+                    "thumbs": self._compact_thumbs(doc.thumbs) if doc.thumbs else None,
+                    "video_thumbs": self._compact_thumbs(doc.video_thumbs) if doc.video_thumbs else None,
+                }
+                # Keep video_cover if exists
+                if media.video_cover:
+                    result["video_cover"] = {
+                        "id": media.video_cover.id,
+                        "access_hash": media.video_cover.access_hash,
+                        "dc_id": media.video_cover.dc_id,
+                    }
+
+        return result
+
+    def _compact_photo_sizes(self, sizes: list) -> list:
+        """Compact photo sizes, removing PhotoStrippedSize.bytes."""
+        result = []
+        for size in sizes:
+            if isinstance(size, types.PhotoStrippedSize):
+                # Skip stripped size (too small for preview)
+                continue
+            elif isinstance(size, types.PhotoCachedSize):
+                # Skip cached size bytes
+                result.append({
+                    "_": "PhotoCachedSize",
+                    "type": size.type,
+                    "w": size.w,
+                    "h": size.h,
+                })
+            elif isinstance(size, (types.PhotoSize, types.PhotoSizeProgressive)):
+                result.append({
+                    "_": size.__class__.__name__,
+                    "type": size.type,
+                    "w": size.w,
+                    "h": size.h,
+                    "size": size.size if hasattr(size, 'size') else max(size.sizes) if hasattr(size, 'sizes') else 0,
+                })
+        return result
+
+    def _compact_doc_attributes(self, attrs: list) -> list:
+        """Compact document attributes to essential fields."""
+        result = []
+        for attr in attrs:
+            if isinstance(attr, types.DocumentAttributeFilename):
+                result.append({
+                    "_": "DocumentAttributeFilename",
+                    "file_name": attr.file_name,
+                })
+            elif isinstance(attr, types.DocumentAttributeVideo):
+                result.append({
+                    "_": "DocumentAttributeVideo",
+                    "duration": attr.duration,
+                    "w": attr.w,
+                    "h": attr.h,
+                })
+            elif isinstance(attr, types.DocumentAttributeAudio):
+                result.append({
+                    "_": "DocumentAttributeAudio",
+                    "duration": attr.duration,
+                    "performer": attr.performer,
+                    "title": attr.title,
+                })
+            elif isinstance(attr, types.DocumentAttributeImageSize):
+                result.append({
+                    "_": "DocumentAttributeImageSize",
+                    "w": attr.w,
+                    "h": attr.h,
+                })
+        return result
+
+    def _compact_thumbs(self, thumbs: list) -> list:
+        """Compact thumbs to essential fields."""
+        result = []
+        for thumb in thumbs or []:
+            if isinstance(thumb, (types.PhotoSize, types.PhotoSizeProgressive)):
+                result.append({
+                    "_": thumb.__class__.__name__,
+                    "type": thumb.type,
+                    "w": thumb.w,
+                    "h": thumb.h,
+                    "size": thumb.size if hasattr(thumb, 'size') else max(thumb.sizes) if hasattr(thumb, 'sizes') else 0,
+                })
+        return result
+
+    def _expand_msg_js(self, msg_js: str) -> dict:
+        """
+        Expand compact msg_js for frontend compatibility.
+
+        Adds default values for missing fields so frontend API remains unchanged.
+        """
+        data = json.loads(msg_js)
+
+        # Check if this is old format (has 'entities' with content)
+        if "entities" in data and data.get("entities"):
+            # Old format with entities - return as-is
+            return data
+
+        # Compact format: expand to match frontend expectations
+        expanded = {
+            "_": "Message",
+            "id": data.get("id"),
+            "peer_id": data.get("peer_id"),
+            "date": data.get("date"),
+            "message": "",  # Empty, actual content is in msg_ctx column
+            "media": data.get("media"),
+            # Add default empty values for other fields frontend might check
+            "entities": [],
+            "replies": None,
+            "reactions": None,
+            "views": None,
+            "forwards": None,
+            "edit_date": None,
+            "post_author": None,
+            "grouped_id": None,
+            "from_id": None,
+            "fwd_from": None,
+            "via_bot_id": None,
+            "reply_to": None,
+        }
+
+        # Restore file_reference from hex if needed
+        if expanded.get("media"):
+            expanded["media"] = self._restore_media_file_ref(expanded["media"])
+
+        return expanded
+
+    def _restore_media_file_ref(self, media: dict) -> dict:
+        """Restore file_reference from hex string to bytes."""
+        if "photo" in media and media["photo"]:
+            if media["photo"].get("file_reference"):
+                media["photo"]["file_reference"] = media["photo"]["file_reference"]
+        if "document" in media and media["document"]:
+            if media["document"].get("file_reference"):
+                media["document"]["file_reference"] = media["document"]["file_reference"]
+        return media
+
     def insert_by_message(self, me: types.User, msg: types.Message):
         user_id = me.id
         chat_id = msg.chat_id
@@ -273,7 +467,8 @@ class UserManager(object):
         mime_type = ""
         file_name = ""
         msg_ctx = msg.message or ""
-        msg_js = msg.to_json()
+        # Use compact msg_js for storage optimization
+        msg_js = self._compact_msg_js(msg)
         date_time = int(msg.date.timestamp() * 1_000) * 1_000_000
         try:
             if msg.media is None:
@@ -360,6 +555,33 @@ class UserManager(object):
         if len(column) == UserManager.ColumnEnum.COLUMN_LEN:
             return column[UserManager.ColumnEnum.MSG_JS]
         return None
+
+    def get_column_msg_js_expanded(self, column: tuple[any]) -> dict | None:
+        """Get msg_js expanded for frontend compatibility."""
+        msg_js = self.get_column_msg_js(column)
+        if msg_js:
+            return self._expand_msg_js(msg_js)
+        return None
+
+    def is_compact_format(self, msg_js: str) -> bool:
+        """Check if msg_js is compact format (has 'message' or 'entities' field = old format)."""
+        try:
+            data = json.loads(msg_js)
+            # Debug: print what we're checking
+            logger.debug(f"is_compact_format: entities={data.get('entities')}, message={data.get('message')}")
+
+            # Old format has 'entities' or 'message' field with actual content
+            # Compact format has 'message' = '' (empty placeholder)
+            has_entities = "entities" in data and isinstance(data.get("entities"), list) and len(data.get("entities", [])) > 0
+            has_message = "message" in data and data.get("message") and len(str(data.get("message", ""))) > 0
+
+            if has_entities or has_message:
+                return False  # Old format
+
+            return True  # Compact format
+        except Exception as err:
+            logger.warning(f"is_compact_format error: {err}")
+            return True
 
     def get_user_info() -> None:
         raise NotImplementedError
@@ -461,6 +683,242 @@ class UserManager(object):
         except Exception as err:
             logger.error(f"{err=}")
             return {}
+
+    def get_storage_stats(self) -> dict:
+        """Get msg_js storage statistics."""
+        import os
+        try:
+            # Count compact vs old format
+            sample_size = 1000
+            rows = self.cur.execute("SELECT msg_js FROM message LIMIT ?", (sample_size,)).fetchall()
+            compact_count = sum(1 for r in rows if self.is_compact_format(r[0]))
+            old_count = len(rows) - compact_count
+
+            # Estimate sizes
+            avg_compact_size = 0
+            avg_old_size = 0
+            compact_samples = [r[0] for r in rows if self.is_compact_format(r[0])][:100]
+            old_samples = [r[0] for r in rows if not self.is_compact_format(r[0])][:100]
+
+            if compact_samples:
+                avg_compact_size = sum(len(s) for s in compact_samples) / len(compact_samples)
+            if old_samples:
+                avg_old_size = sum(len(s) for s in old_samples) / len(old_samples)
+
+            total_count = self.cur.execute("SELECT COUNT(*) FROM message").fetchone()[0]
+            db_size = os.path.getsize(f"{os.path.dirname(__file__)}/db/user.db")
+
+            return {
+                "total_count": total_count,
+                "db_size_mb": db_size / 1024 / 1024,
+                "compact_count_estimate": int(compact_count / sample_size * total_count),
+                "old_count_estimate": int(old_count / sample_size * total_count),
+                "avg_compact_size": avg_compact_size,
+                "avg_old_size": avg_old_size,
+                "potential_saving_mb": (avg_old_size - avg_compact_size) * old_count * total_count / sample_size / 1024 / 1024 if avg_old_size > avg_compact_size else 0,
+            }
+        except Exception as err:
+            logger.error(f"{err=},{traceback.format_exc()}")
+            return {}
+
+    def migrate_to_compact(self, batch_size: int = 1000, limit: int = None) -> dict:
+        """
+        Migrate old msg_js format to compact format.
+
+        Args:
+            batch_size: Number of records per batch
+            limit: Maximum total records to migrate (None = all)
+
+        Returns:
+            Stats about migration progress
+        """
+        import re
+        try:
+            # Get old format records
+            count_query = "SELECT COUNT(*) FROM message"
+            total_count = self.cur.execute(count_query).fetchone()[0]
+
+            # Find old format records (those with entities or large msg_js)
+            # Simple heuristic: msg_js length > 3000 = likely old format
+            if limit:
+                query = f"SELECT unique_id, msg_js FROM message WHERE LENGTH(msg_js) > 3000 LIMIT {limit}"
+            else:
+                query = "SELECT unique_id, msg_js FROM message WHERE LENGTH(msg_js) > 3000"
+
+            rows = self.cur.execute(query).fetchall()
+            to_migrate = len(rows)
+
+            logger.info(f"Found {to_migrate} old format records to migrate")
+
+            migrated = 0
+            errors = 0
+
+            for i, (unique_id, msg_js) in enumerate(rows):
+                try:
+                    old_data = json.loads(msg_js)
+
+                    # Create compact version from old data
+                    compact = {
+                        "id": old_data.get("id"),
+                        "peer_id": old_data.get("peer_id"),
+                        "date": old_data.get("date"),
+                    }
+
+                    # Compact media if exists
+                    if old_data.get("media"):
+                        compact["media"] = self._compact_media_from_dict(old_data["media"])
+
+                    compact_js = json.dumps(compact, ensure_ascii=False)
+
+                    # Update record
+                    self.cur.execute(
+                        "UPDATE message SET msg_js = ? WHERE unique_id = ?",
+                        (compact_js, unique_id),
+                    )
+
+                    # Also update FTS
+                    msg_ctx = old_data.get("message", "")
+                    file_name = self._extract_file_name_from_dict(old_data.get("media"))
+                    msg_ctx_fts = re.sub(r'\s+', '', msg_ctx or "")
+                    file_name_fts = re.sub(r'\s+', '', file_name or "")
+                    self.cur.execute(
+                        "UPDATE OR REPLACE message_fts SET msg_ctx = ?, file_name = ? WHERE unique_id = ?",
+                        (msg_ctx_fts, file_name_fts, unique_id),
+                    )
+
+                    migrated += 1
+
+                    # Commit in batches
+                    if (i + 1) % batch_size == 0:
+                        self.con.commit()
+                        logger.info(f"Migrated {migrated}/{to_migrate} records")
+
+                except Exception as err:
+                    errors += 1
+                    logger.warning(f"Migration error for {unique_id}: {err}")
+
+            self.con.commit()
+            logger.info(f"Migration complete: {migrated} records, {errors} errors")
+
+            return {
+                "total_found": to_migrate,
+                "migrated": migrated,
+                "errors": errors,
+                "remaining": to_migrate - migrated,
+            }
+
+        except Exception as err:
+            logger.error(f"Migration error: {err=},{traceback.format_exc()}")
+            return {"error": str(err)}
+
+    def _compact_media_from_dict(self, media: dict) -> dict:
+        """Compact media dict (from old msg_js format)."""
+        result = {"_": media.get("_", "")}
+
+        if "photo" in media:
+            photo = media["photo"]
+            if photo:
+                result["photo"] = {
+                    "id": photo.get("id"),
+                    "access_hash": photo.get("access_hash"),
+                    "file_reference": photo.get("file_reference"),
+                    "dc_id": photo.get("dc_id"),
+                    "sizes": self._compact_photo_sizes_from_dict(photo.get("sizes", [])),
+                }
+
+        if "document" in media:
+            doc = media["document"]
+            if doc:
+                result["document"] = {
+                    "id": doc.get("id"),
+                    "access_hash": doc.get("access_hash"),
+                    "file_reference": doc.get("file_reference"),
+                    "dc_id": doc.get("dc_id"),
+                    "mime_type": doc.get("mime_type"),
+                    "size": doc.get("size"),
+                    "attributes": self._compact_attrs_from_dict(doc.get("attributes", [])),
+                    "thumbs": self._compact_thumbs_from_dict(doc.get("thumbs")),
+                    "video_thumbs": self._compact_thumbs_from_dict(doc.get("video_thumbs")),
+                }
+
+        if "video_cover" in media:
+            vc = media["video_cover"]
+            if vc:
+                result["video_cover"] = {
+                    "id": vc.get("id"),
+                    "access_hash": vc.get("access_hash"),
+                    "dc_id": vc.get("dc_id"),
+                }
+
+        return result
+
+    def _compact_photo_sizes_from_dict(self, sizes: list) -> list:
+        """Compact photo sizes from dict."""
+        result = []
+        for size in sizes:
+            type_str = size.get("_", "")
+            if "PhotoStrippedSize" in type_str:
+                continue  # Skip stripped
+            compact_size = {
+                "_": type_str,
+                "type": size.get("type"),
+                "w": size.get("w"),
+                "h": size.get("h"),
+            }
+            if "size" in size:
+                compact_size["size"] = size["size"]
+            elif "sizes" in size:
+                compact_size["size"] = max(size["sizes"])
+            result.append(compact_size)
+        return result
+
+    def _compact_attrs_from_dict(self, attrs: list) -> list:
+        """Compact document attributes from dict."""
+        result = []
+        for attr in attrs:
+            type_str = attr.get("_", "")
+            if "Filename" in type_str:
+                result.append({"_": type_str, "file_name": attr.get("file_name")})
+            elif "Video" in type_str:
+                result.append({"_": type_str, "duration": attr.get("duration"), "w": attr.get("w"), "h": attr.get("h")})
+            elif "Audio" in type_str:
+                result.append({"_": type_str, "duration": attr.get("duration"), "performer": attr.get("performer"), "title": attr.get("title")})
+            elif "ImageSize" in type_str:
+                result.append({"_": type_str, "w": attr.get("w"), "h": attr.get("h")})
+        return result
+
+    def _compact_thumbs_from_dict(self, thumbs: list | None) -> list | None:
+        """Compact thumbs from dict."""
+        if not thumbs:
+            return None
+        result = []
+        for thumb in thumbs:
+            type_str = thumb.get("_", "")
+            if "Stripped" in type_str:
+                continue
+            compact_thumb = {
+                "_": type_str,
+                "type": thumb.get("type"),
+                "w": thumb.get("w"),
+                "h": thumb.get("h"),
+            }
+            if "size" in thumb:
+                compact_thumb["size"] = thumb["size"]
+            elif "sizes" in thumb:
+                compact_thumb["size"] = max(thumb["sizes"])
+            result.append(compact_thumb)
+        return result if result else None
+
+    def _extract_file_name_from_dict(self, media: dict | None) -> str:
+        """Extract file name from media dict."""
+        if not media:
+            return ""
+        doc = media.get("document")
+        if doc:
+            for attr in doc.get("attributes", []):
+                if "Filename" in attr.get("_", ""):
+                    return attr.get("file_name", "")
+        return ""
 
 
 if __name__ == "__main__":
