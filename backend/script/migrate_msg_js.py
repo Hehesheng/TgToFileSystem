@@ -58,6 +58,7 @@ def main():
     parser = argparse.ArgumentParser(description='Migrate msg_js to compact format')
     parser.add_argument('--limit', type=int, default=None, help='Maximum records to migrate (None = all)')
     parser.add_argument('--vacuum', action='store_true', help='Run VACUUM after migration')
+    parser.add_argument('--vacuum-only', action='store_true', help='Only run VACUUM, skip migration')
     parser.add_argument('--stats', action='store_true', help='Only show stats, no migration')
     parser.add_argument('--fetch-batch', type=int, default=100, help='Records to fetch per batch')
     parser.add_argument('--start-date', type=int, default=None, help='Start from this date_time (resume)')
@@ -78,6 +79,27 @@ def main():
             print(f'\n=== Saved Progress ===')
             print(f'  last_processed_date: {progress.get("last_processed_date")}')
             print(f'  migrated: {progress.get("migrated")}')
+        return
+
+    # Vacuum only mode
+    if args.vacuum_only:
+        print('\n=== Running VACUUM Only ===')
+        print('This may take a few minutes...')
+        db.cur.execute('VACUUM')
+        db.con.commit()
+        print('VACUUM completed.')
+
+        # Show final stats
+        print('\n=== Final Storage Stats ===')
+        stats = db.get_storage_stats()
+        for k, v in stats.items():
+            print(f'  {k}: {v}')
+
+        # Show file size
+        db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'db', 'user.db')
+        if os.path.exists(db_path):
+            file_size_mb = os.path.getsize(db_path) / 1024 / 1024
+            print(f'  db_file_size_mb: {file_size_mb:.2f}')
         return
 
     # Determine start_date
