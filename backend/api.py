@@ -4,9 +4,11 @@ import os
 import sys
 import logging
 import traceback
+import uuid
 from typing import Annotated
 from urllib.parse import quote
 from datetime import datetime
+from collections import OrderedDict
 
 import uvicorn
 from fastapi import FastAPI, status, Request, Depends, HTTPException
@@ -22,6 +24,35 @@ from backend.TgFileSystemClientManager import TgFileSystemClientManager, EnumSig
 from backend.UserManager import UserManager
 
 logger = logging.getLogger(__file__.split("/")[-1])
+
+
+# LRU cache for ani search results (max 10 entries)
+class AniSearchCache:
+    def __init__(self, max_size: int = 10):
+        self.max_size = max_size
+        self.cache: OrderedDict[str, str] = OrderedDict()
+
+    def add(self, html_content: str) -> str:
+        """Add new search result, return the id"""
+        id = uuid.uuid4().hex[:8]
+        self.cache[id] = html_content
+        # Move to end (most recently used)
+        self.cache.move_to_end(id)
+        # Remove oldest if exceeds max_size
+        while len(self.cache) > self.max_size:
+            oldest_id = next(iter(self.cache))
+            del self.cache[oldest_id]
+        return id
+
+    def get(self, id: str) -> str | None:
+        """Get search result by id, returns None if not found"""
+        if id in self.cache:
+            self.cache.move_to_end(id)  # Mark as recently used
+            return self.cache[id]
+        return None
+
+
+ani_search_cache = AniSearchCache()
 
 
 async def lifespan(app: FastAPI):
@@ -437,11 +468,11 @@ async def ani_search(keyword: str, sign: str, limit: int = 50):
       </div>
     </div>""")
 
-        html_page = f"""<!DOCTYPE html>
+        result_html = f"""<!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>TgToFileSystem Search: {keyword}</title>
+  <title>TgToFileSystem Result: {keyword}</title>
 </head>
 <body>
   <div class="module-search">
@@ -452,11 +483,56 @@ async def ani_search(keyword: str, sign: str, limit: int = 50):
 </body>
 </html>"""
 
-        return Response(html_page, media_type="text/html", status_code=status.HTTP_200_OK)
+        # Store result in cache and get id
+        result_id = ani_search_cache.add(result_html)
+        result_url = f"{param.base.exposed_url}/tg/api/v1/ani/result/{result_id}"
+
+        # Return simple HTML with link to result
+        search_html = f"""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>TgToFileSystem Search: {keyword}</title>
+</head>
+<body>
+  <div class="module-search">
+    <div class="module-card-list">
+    <div class="module-card-item">
+      <div class="module-card-item-info">
+        <div class="module-card-item-title">
+          <a href="{result_url}" title="{keyword}">{keyword}</a>
+        </div>
+        <div class="module-card-item-desc">{len(results)} results</div>
+      </div>
+    </div>
+    </div>
+  </div>
+</body>
+</html>"""
+
+        return Response(search_html, media_type="text/html", status_code=status.HTTP_200_OK)
 
     except Exception as err:
         logger.error(f"{err=},{traceback.format_exc()}")
         return Response(f"<html><body><error>{err}</error></body></html>", media_type="text/html", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@app.get("/tg/api/v1/ani/result/{result_id}")
+@apiutils.atimeit
+async def ani_result(result_id: str):
+    """
+    Ani player result page.
+
+    Returns cached HTML with media files for the search result.
+    """
+    result_html = ani_search_cache.get(result_id)
+    if result_html is None:
+        return Response(
+            "<html><body><error>Result expired or not found</error></body></html>",
+            media_type="text/html",
+            status_code=status.HTTP_404_NOT_FOUND,
+        )
+    return Response(result_html, media_type="text/html", status_code=status.HTTP_200_OK)
 
 
 @app.get("/tg/api/v1/ani/source/{api_key}")
