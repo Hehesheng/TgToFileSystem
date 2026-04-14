@@ -586,6 +586,7 @@ async def ani_source(api_key: str):
                                 "searchUrl": search_url_template,
                                 "searchUseOnlyFirstWord": False,
                                 "searchRemoveSpecial": False,
+                                "searchUseSubjectNamesCount": 1,
                                 "rawBaseUrl": "",
                                 "requestInterval": 0,
                                 "subjectFormatId": "a",
@@ -618,6 +619,8 @@ async def ani_source(api_key: str):
                                     "matchEpisodeSortFromName": "(第\\s*(?<ep>.+)\\s*[话集])|(?<ep>\\d+)",
                                 },
                                 "defaultResolution": "1080P",
+                                "defaultSubtitleLanguage": "CHS",
+                                "onlySupportsPlayers": [],
                                 "filterByEpisodeSort": True,
                                 "filterBySubjectName": True,
                                 "selectMedia": {
@@ -631,6 +634,7 @@ async def ani_source(api_key: str):
                                     "cookies": "",
                                     "addHeadersToVideo": {
                                         "referer": "",
+                                        "userAgent": "",
                                     },
                                 },
                             },
