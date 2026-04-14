@@ -590,10 +590,10 @@ async def ani_source(api_key: str):
                                     "selectLists": ".module-card-item>.module-card-item-info>.module-card-item-title>a",
                                     "preferShorterName": False,
                                 },
-                                "channelFormatId": "flattened",
-                                "selectorChannelFormatFlattened": {
-                                    "selectEpisodeLists": ".module-card-list",
-                                    "selectEpisodesFromList": ".module-card-item>.module-card-item-info>.module-card-item-title>a",
+                                "channelFormatId": "no-channel",
+                                "selectorChannelFormatNoChannel": {
+                                    "selectEpisodes": ".module-card-list .module-card-item .module-card-item-info .module-card-item-title a",
+                                    "selectEpisodeLinks": "",
                                     "matchEpisodeSortFromName": "(第\\s*(?<ep>.+)\\s*[话集])|(?<ep>\\d+)",
                                 },
                                 "matchVideo": {
