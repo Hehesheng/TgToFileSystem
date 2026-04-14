@@ -93,23 +93,36 @@ class UserManager(object):
             List of matching messages
         """
         if not chat_ids:
-            logger.warning("chat_ids is empty.")
-            return []
+            # Empty chat_ids = search all chats
+            chat_ids = []
+            chat_placeholders = ""
+            chat_filter = ""
+        else:
+            chat_placeholders = ",".join(["?"] * len(chat_ids))
+            chat_filter = f"WHERE m.chat_id IN ({chat_placeholders})"
 
         if not keyword or keyword.strip() == "":
             # No keyword, return by date
-            chat_placeholders = ",".join(["?"] * len(chat_ids))
             order_direction = "" if inc else "DESC"
-            execute_script = f"""
-                SELECT * FROM message
-                WHERE chat_id IN ({chat_placeholders})
-                ORDER BY date_time {order_direction}
-                LIMIT ? OFFSET ?
-            """
-            params = tuple(chat_ids) + (limit, offset)
+            if chat_ids:
+                execute_script = f"""
+                    SELECT * FROM message
+                    WHERE chat_id IN ({chat_placeholders})
+                    ORDER BY date_time {order_direction}
+                    LIMIT ? OFFSET ?
+                """
+                params = tuple(chat_ids) + (limit, offset)
+            else:
+                execute_script = f"""
+                    SELECT * FROM message
+                    ORDER BY date_time {order_direction}
+                    LIMIT ? OFFSET ?
+                """
+                params = (limit, offset)
             return self.cur.execute(execute_script, params)
 
-        chat_placeholders = ",".join(["?"] * len(chat_ids))
+        if chat_ids:
+            chat_placeholders = ",".join(["?"] * len(chat_ids))
         import re
 
         keyword_no_space = re.sub(r'\s+', '', keyword)
@@ -118,34 +131,101 @@ class UserManager(object):
             # FTS5 with BM25 ranking
             fts_query = self._build_fts_query(keyword)
 
-            # Use bm25() for relevance ranking, pagination at SQL level
-            order_clause = "date_time ASC" if inc else "bm25(message_fts) ASC"
-            execute_script = f"""
-                SELECT m.*, bm25(message_fts) as score
-                FROM message m
-                JOIN message_fts f ON m.unique_id = f.unique_id
-                WHERE m.chat_id IN ({chat_placeholders})
-                AND message_fts MATCH ?
-                ORDER BY {order_clause}
-                LIMIT ? OFFSET ?
-            """
-            params = tuple(chat_ids) + (fts_query, limit, offset)
-            logger.info(f"FTS query: {fts_query}")
+            # Check if contains Chinese - need special handling for space variations
+            import re
+            has_chinese = bool(re.search(r'[\u4e00-\u9fff]', keyword))
 
-            results = self.cur.execute(execute_script, params).fetchall()
-            # Return without score column
-            return [r[:-1] for r in results]
+            if has_chinese:
+                # Chinese: FTS OR for candidates, then Python filter for exact match
+                # Fetch more candidates for filtering
+                fetch_limit = limit * 5 + offset
+                order_clause = "date_time ASC" if inc else "bm25(message_fts) ASC"
+
+                if chat_ids:
+                    execute_script = f"""
+                        SELECT m.*, bm25(message_fts) as score
+                        FROM message m
+                        JOIN message_fts f ON m.unique_id = f.unique_id
+                        WHERE m.chat_id IN ({chat_placeholders})
+                        AND message_fts MATCH ?
+                        ORDER BY {order_clause}
+                        LIMIT ?
+                    """
+                    params = tuple(chat_ids) + (fts_query, fetch_limit)
+                else:
+                    execute_script = f"""
+                        SELECT m.*, bm25(message_fts) as score
+                        FROM message m
+                        JOIN message_fts f ON m.unique_id = f.unique_id
+                        WHERE message_fts MATCH ?
+                        ORDER BY {order_clause}
+                        LIMIT ?
+                    """
+                    params = (fts_query, fetch_limit)
+                logger.info(f"FTS query (Chinese): {fts_query}")
+
+                raw_results = self.cur.execute(execute_script, params).fetchall()
+
+                # Filter: check if keyword_no_space exists in text (spaces removed)
+                filtered = []
+                for r in raw_results:
+                    msg_ctx = r[5] or ''
+                    file_name = r[7] or ''
+                    combined = re.sub(r'\s+', '', msg_ctx + file_name)
+                    if keyword_no_space in combined:
+                        filtered.append(r[:-1])  # Remove score column
+
+                # Apply offset and limit after filtering
+                return filtered[offset:offset + limit]
+
+            else:
+                # Non-Chinese: direct FTS match (phrase works well)
+                order_clause = "date_time ASC" if inc else "bm25(message_fts) ASC"
+                if chat_ids:
+                    execute_script = f"""
+                        SELECT m.*, bm25(message_fts) as score
+                        FROM message m
+                        JOIN message_fts f ON m.unique_id = f.unique_id
+                        WHERE m.chat_id IN ({chat_placeholders})
+                        AND message_fts MATCH ?
+                        ORDER BY {order_clause}
+                        LIMIT ? OFFSET ?
+                    """
+                    params = tuple(chat_ids) + (fts_query, limit, offset)
+                else:
+                    execute_script = f"""
+                        SELECT m.*, bm25(message_fts) as score
+                        FROM message m
+                        JOIN message_fts f ON m.unique_id = f.unique_id
+                        WHERE message_fts MATCH ?
+                        ORDER BY {order_clause}
+                        LIMIT ? OFFSET ?
+                    """
+                    params = (fts_query, limit, offset)
+                logger.info(f"FTS query: {fts_query}")
+
+                results = self.cur.execute(execute_script, params).fetchall()
+                return [r[:-1] for r in results]
 
         else:
             # Short keyword: LIKE scan with pagination
-            execute_script = f"""
-                SELECT * FROM message
-                WHERE chat_id IN ({chat_placeholders})
-                AND (msg_ctx LIKE ? OR file_name LIKE ?)
-                ORDER BY date_time DESC
-                LIMIT ? OFFSET ?
-            """
-            params = tuple(chat_ids) + (f"%{keyword_no_space}%", f"%{keyword_no_space}%", limit, offset)
+            if chat_ids:
+                execute_script = f"""
+                    SELECT * FROM message
+                    WHERE chat_id IN ({chat_placeholders})
+                    AND (msg_ctx LIKE ? OR file_name LIKE ?)
+                    ORDER BY date_time DESC
+                    LIMIT ? OFFSET ?
+                """
+                params = tuple(chat_ids) + (f"%{keyword_no_space}%", f"%{keyword_no_space}%", limit, offset)
+            else:
+                execute_script = f"""
+                    SELECT * FROM message
+                    WHERE (msg_ctx LIKE ? OR file_name LIKE ?)
+                    ORDER BY date_time DESC
+                    LIMIT ? OFFSET ?
+                """
+                params = (f"%{keyword_no_space}%", f"%{keyword_no_space}%", limit, offset)
             logger.info(f"LIKE scan for short keyword: {keyword_no_space}")
             return self.cur.execute(execute_script, params)
 
@@ -535,10 +615,16 @@ class UserManager(object):
         return None
 
     def get_column_msg_js_expanded(self, column: tuple[any]) -> dict | None:
-        """Get msg_js expanded for frontend compatibility."""
+        """Get msg_js expanded for frontend compatibility, with msg_ctx filled in."""
         msg_js = self.get_column_msg_js(column)
         if msg_js:
-            return self._expand_msg_js(msg_js)
+            expanded = self._expand_msg_js(msg_js)
+            # Fill in msg_ctx (actual message content) from column
+            if expanded and len(column) >= self.ColumnEnum.MSG_CTX:
+                msg_ctx = column[self.ColumnEnum.MSG_CTX]
+                if msg_ctx:
+                    expanded["message"] = msg_ctx
+            return expanded
         return None
 
     def is_compact_format(self, msg_js: str) -> bool:

@@ -300,7 +300,6 @@ class TgFileSystemClient(object):
         limit: int = 10,
         offset: int = 0,
         inc: bool = False,
-        ignore_case: bool = False,
     ) -> list[any]:
         res = self.db.get_msg_by_chat_id_and_keyword(
             chat_ids,
@@ -308,9 +307,9 @@ class TgFileSystemClient(object):
             limit=limit,
             offset=offset,
             inc=inc,
-            ignore_case=ignore_case,
         )
-        res = [self.db.get_column_msg_js(v) for v in res]
+        # Use expanded format for frontend compatibility
+        res = [json.dumps(self.db.get_column_msg_js_expanded(v)) for v in res if self.db.get_column_msg_js_expanded(v)]
         return res
 
     async def _download_media_chunk(self, msg: types.Message, media_holder: MediaChunkHolder) -> None:
