@@ -380,11 +380,12 @@ async def ani_source(api_key: str):
         clients_mgr = TgFileSystemClientManager.get_instance()
 
         # Get first available client
-        clients_status = await clients_mgr.get_status()
-        if not clients_status or len(clients_status) == 0:
+        status = await clients_mgr.get_status()
+        clients_list = status.get("clients", [])
+        if not clients_list:
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="No available clients")
 
-        target_client_name = clients_status[0].get("name", "")
+        target_client_name = clients_list[0].get("name", "")
 
         # Generate 24h valid sign
         sign = clients_mgr.generate_sign(
