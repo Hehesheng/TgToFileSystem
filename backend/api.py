@@ -596,6 +596,13 @@ async def ani_source(api_key: str):
                                     "selectEpisodeLinks": "",
                                     "matchEpisodeSortFromName": "(第\\s*(?<ep>.+)\\s*[话集])|(?<ep>\\d+)",
                                 },
+                                "defaultResolution": "1080P",
+                                "filterByEpisodeSort": True,
+                                "filterBySubjectName": True,
+                                "selectMedia": {
+                                    "distinguishSubjectName": True,
+                                    "distinguishChannelName": True,
+                                },
                                 "matchVideo": {
                                     "enableNestedUrl": False,
                                     "matchNestedUrl": "$^",
