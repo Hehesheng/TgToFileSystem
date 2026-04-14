@@ -585,12 +585,33 @@ async def ani_source(api_key: str):
                             "searchConfig": {
                                 "searchUrl": search_url_template,
                                 "searchUseOnlyFirstWord": False,
+                                "searchRemoveSpecial": False,
+                                "rawBaseUrl": "",
+                                "requestInterval": 0,
                                 "subjectFormatId": "a",
                                 "selectorSubjectFormatA": {
                                     "selectLists": ".module-card-item>.module-card-item-info>.module-card-item-title>a",
                                     "preferShorterName": False,
                                 },
+                                "selectorSubjectFormatIndexed": {
+                                    "selectNames": "",
+                                    "selectLinks": "",
+                                    "preferShorterName": False,
+                                },
+                                "selectorSubjectFormatJsonPathIndexed": {
+                                    "selectLinks": "",
+                                    "selectNames": "",
+                                    "preferShorterName": False,
+                                },
                                 "channelFormatId": "no-channel",
+                                "selectorChannelFormatFlattened": {
+                                    "selectChannelNames": "",
+                                    "matchChannelName": "",
+                                    "selectEpisodeLists": ".module-card-list",
+                                    "selectEpisodesFromList": ".module-card-item>.module-card-item-info>.module-card-item-title>a",
+                                    "selectEpisodeLinksFromList": "",
+                                    "matchEpisodeSortFromName": "(第\\s*(?<ep>.+)\\s*[话集])|(?<ep>\\d+)",
+                                },
                                 "selectorChannelFormatNoChannel": {
                                     "selectEpisodes": ".module-card-list .module-card-item .module-card-item-info .module-card-item-title a",
                                     "selectEpisodeLinks": "",
