@@ -326,7 +326,15 @@ async def rss_search(keyword: str, sign: str, limit: int = 50):
             download_url = f"{param.base.exposed_url}/tg/api/v1/file/get/{chat_id}/{msg_id}/{quote(file_name)}?sign={sign}"
 
             # Format date
-            pub_date = datetime.fromtimestamp(date_time).strftime("%a, %d %b %Y %H:%M:%S +0000") if date_time else ""
+            # Format date (Telegram stores nanoseconds, convert to seconds)
+            pub_date = ""
+            if date_time:
+                try:
+                    # date_time is in nanoseconds, convert to seconds
+                    ts_seconds = date_time / 1_000_000_000
+                    pub_date = datetime.fromtimestamp(ts_seconds).strftime("%a, %d %b %Y %H:%M:%S +0000")
+                except (OSError, ValueError):
+                    pub_date = ""
 
             # Get file size from msg_js
             file_size = 0
@@ -380,8 +388,8 @@ async def ani_source(api_key: str):
         clients_mgr = TgFileSystemClientManager.get_instance()
 
         # Get first available client
-        status = await clients_mgr.get_status()
-        clients_list = status.get("clients", [])
+        mgr_status = await clients_mgr.get_status()
+        clients_list = mgr_status.get("clients", [])
         if not clients_list:
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="No available clients")
 
