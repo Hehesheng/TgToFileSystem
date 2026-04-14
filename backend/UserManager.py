@@ -166,13 +166,18 @@ class UserManager(object):
 
                 raw_results = self.cur.execute(execute_script, params).fetchall()
 
-                # Filter: check if keyword_no_space exists in text (spaces removed)
+                # Filter: split keyword by space, each part must exist in text
+                # This allows "金牌得主 02" to match "金牌得主第二季-02"
+                keyword_parts = [p for p in keyword.split() if p]
                 filtered = []
                 for r in raw_results:
                     msg_ctx = r[5] or ''
                     file_name = r[7] or ''
                     combined = re.sub(r'\s+', '', msg_ctx + file_name)
-                    if keyword_no_space in combined:
+
+                    # Check all parts exist in combined text
+                    all_match = all(part in combined for part in keyword_parts)
+                    if all_match:
                         filtered.append(r[:-1])  # Remove score column
 
                 # Apply offset and limit after filtering
@@ -208,25 +213,58 @@ class UserManager(object):
                 return [r[:-1] for r in results]
 
         else:
-            # Short keyword: LIKE scan with pagination
-            if chat_ids:
-                execute_script = f"""
-                    SELECT * FROM message
-                    WHERE chat_id IN ({chat_placeholders})
-                    AND (msg_ctx LIKE ? OR file_name LIKE ?)
-                    ORDER BY date_time DESC
-                    LIMIT ? OFFSET ?
-                """
-                params = tuple(chat_ids) + (f"%{keyword_no_space}%", f"%{keyword_no_space}%", limit, offset)
+            # Short keyword or multi-part: LIKE scan with pagination
+            keyword_parts = [p for p in keyword.split() if p]
+
+            if len(keyword_parts) == 1:
+                # Single part: simple LIKE
+                kw = keyword_parts[0]
+                if chat_ids:
+                    execute_script = f"""
+                        SELECT * FROM message
+                        WHERE chat_id IN ({chat_placeholders})
+                        AND (msg_ctx LIKE ? OR file_name LIKE ?)
+                        ORDER BY date_time DESC
+                        LIMIT ? OFFSET ?
+                    """
+                    params = tuple(chat_ids) + (f"%{kw}%", f"%{kw}%", limit, offset)
+                else:
+                    execute_script = f"""
+                        SELECT * FROM message
+                        WHERE (msg_ctx LIKE ? OR file_name LIKE ?)
+                        ORDER BY date_time DESC
+                        LIMIT ? OFFSET ?
+                    """
+                    params = (f"%{kw}%", f"%{kw}%", limit, offset)
+                logger.info(f"LIKE scan for single keyword: {kw}")
+                return self.cur.execute(execute_script, params)
+
             else:
-                execute_script = f"""
-                    SELECT * FROM message
-                    WHERE (msg_ctx LIKE ? OR file_name LIKE ?)
-                    ORDER BY date_time DESC
-                    LIMIT ? OFFSET ?
-                """
-                params = (f"%{keyword_no_space}%", f"%{keyword_no_space}%", limit, offset)
-            logger.info(f"LIKE scan for short keyword: {keyword_no_space}")
+                # Multi-part: all parts must match
+                # Build: msg_ctx LIKE '%part1%' AND msg_ctx LIKE '%part2%' ...
+                ctx_likes = " AND ".join([f"msg_ctx LIKE ?" for _ in keyword_parts])
+                fn_likes = " AND ".join([f"file_name LIKE ?" for _ in keyword_parts])
+
+                if chat_ids:
+                    execute_script = f"""
+                        SELECT * FROM message
+                        WHERE chat_id IN ({chat_placeholders})
+                        AND (({ctx_likes}) OR ({fn_likes}))
+                        ORDER BY date_time DESC
+                        LIMIT ? OFFSET ?
+                    """
+                    params = tuple(chat_ids) + tuple(f"%{p}%" for p in keyword_parts) + tuple(f"%{p}%" for p in keyword_parts) + (limit, offset)
+                else:
+                    execute_script = f"""
+                        SELECT * FROM message
+                        WHERE ({ctx_likes}) OR ({fn_likes})
+                        ORDER BY date_time DESC
+                        LIMIT ? OFFSET ?
+                    """
+                    params = tuple(f"%{p}%" for p in keyword_parts) + tuple(f"%{p}%" for p in keyword_parts) + (limit, offset)
+
+                logger.info(f"LIKE scan for multi-part keyword: {keyword_parts}")
+                return self.cur.execute(execute_script, params)
             return self.cur.execute(execute_script, params)
 
     def _build_fts_query(self, keyword: str) -> str:
