@@ -369,14 +369,104 @@ async def rss_search(keyword: str, sign: str, limit: int = 50):
         return Response(f"<error>{err}</error>", media_type="application/xml", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
+@app.get("/tg/api/v1/ani/search")
+@apiutils.atimeit
+async def ani_search(keyword: str, sign: str, limit: int = 50):
+    """
+    Ani player web-selector search endpoint.
+
+    Returns HTML page with search results that ani player can parse with CSS selectors.
+    """
+    try:
+        # Verify sign and get client
+        clients_mgr = TgFileSystemClientManager.get_instance()
+        if not clients_mgr.verify_sign(sign):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid sign")
+
+        param = configParse.get_TgToFileSystemParameter()
+
+        # Get client_id from sign
+        sign_info = clients_mgr.parse_sign(sign)
+        client_id = TgFileSystemClientManager.get_sign_client_id(sign_info)
+        client = await clients_mgr.get_client_force(client_id)
+
+        # Use client's whitelist_chat for search scope
+        chat_ids = client.client_param.whitelist_chat
+
+        # Search from database
+        db = UserManager()
+        results = db.get_msg_by_chat_id_and_keyword(
+            chat_ids=chat_ids,
+            keyword=keyword,
+            limit=limit,
+        )
+
+        # Build HTML page for web-selector parsing
+        # Structure: each result is a module-card-item with download link
+        html_items = []
+        for row in results:
+            chat_id = row[2]
+            msg_id = row[3]
+            file_name = row[7] or "unknown.tmp"
+            msg_js = row[8]
+
+            download_url = f"{param.base.exposed_url}/tg/api/v1/file/get/{chat_id}/{msg_id}/{quote(file_name)}?sign={sign}"
+
+            # Parse msg_js for size info
+            try:
+                msg_info = json.loads(msg_js) if msg_js else {}
+            except:
+                msg_info = {}
+
+            media = msg_info.get("media", {})
+            if isinstance(media, dict):
+                file_size = media.get("size", 0)
+            else:
+                file_size = 0
+
+            size_str = f"{file_size / 1024 / 1024:.1f}MB" if file_size > 0 else ""
+
+            # HTML item structure for web-selector
+            html_items.append(f"""
+    <div class="module-card-item">
+      <div class="module-card-item-info">
+        <div class="module-card-item-title">
+          <a href="{download_url}" title="{file_name}">{file_name}</a>
+        </div>
+        <div class="module-card-item-desc">{size_str}</div>
+      </div>
+    </div>""")
+
+        html_page = f"""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>TgToFileSystem Search: {keyword}</title>
+</head>
+<body>
+  <div class="module-search">
+    <div class="module-card-list">
+{"".join(html_items)}
+    </div>
+  </div>
+</body>
+</html>"""
+
+        return Response(html_page, media_type="text/html", status_code=status.HTTP_200_OK)
+
+    except Exception as err:
+        logger.error(f"{err=},{traceback.format_exc()}")
+        return Response(f"<html><body><error>{err}</error></body></html>", media_type="text/html", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
 @app.get("/tg/api/v1/ani/source/{api_key}")
 @apiutils.atimeit
 async def ani_source(api_key: str):
     """
-    Generate ani player media source config.
+    Generate ani player media source config (web-selector format).
 
     Requires api_key in path (random string configured in config.toml).
-    Returns JSON with 24h valid sign for RSS search.
+    Returns JSON with 24h valid sign for search.
     """
     try:
         param = configParse.get_TgToFileSystemParameter()
@@ -404,24 +494,54 @@ async def ani_source(api_key: str):
         logger.info(f"Generated 24h sign for ani player, client: {target_client_name}")
 
         # Build search URL template with {keyword} placeholder for ani player
-        search_url_template = f"{param.base.exposed_url}/tg/api/v1/rss/search?keyword={{keyword}}&sign={sign}&limit=50"
+        search_url_template = f"{param.base.exposed_url}/tg/api/v1/ani/search?keyword={{keyword}}&sign={sign}&limit=50"
 
         source_config = {
             "exportedMediaSourceDataList": {
                 "mediaSources": [
                     {
-                        "factoryId": "rss",
-                        "version": 1,
+                        "factoryId": "web-selector",
+                        "version": 2,
                         "arguments": {
                             "name": "TgToFileSystem",
                             "description": "Telegram media from TgToFileSystem (sign valid for 24h)",
                             "iconUrl": f"{param.base.exposed_url}/favicon.ico",
                             "searchConfig": {
                                 "searchUrl": search_url_template,
-                                "filterByEpisodeSort": True,
-                                "filterBySubjectName": True,
-                            }
-                        }
+                                "searchUseOnlyFirstWord": False,
+                                "subjectFormatId": "a",
+                                "selectorSubjectFormatA": {
+                                    "selectLists": ".module-card-item>.module-card-item-info>.module-card-item-title>a",
+                                    "preferShorterName": False,
+                                },
+                                "channelFormatId": "index-grouped",
+                                "selectorChannelFormatFlattened": {
+                                    "selectChannelNames": ".module-tab-item>span",
+                                    "matchChannelName": "^(.+)$",
+                                    "selectEpisodeLists": ".module-play-list-content",
+                                    "selectEpisodesFromList": "a",
+                                    "selectEpisodeLinksFromList": "",
+                                    "matchEpisodeSortFromName": "(第\\s*(?<ep>.+)\\s*[话集])|(?<ep>\\d+)",
+                                },
+                                "defaultResolution": "1080P",
+                                "defaultSubtitleLanguage": "CHS",
+                                "onlySupportsPlayers": [],
+                                "selectMedia": {
+                                    "distinguishSubjectName": True,
+                                    "distinguishChannelName": True,
+                                },
+                                "matchVideo": {
+                                    "enableNestedUrl": False,
+                                    "matchNestedUrl": "$^",
+                                    "matchVideoUrl": f"({param.base.exposed_url}/tg/api/v1/file/get/.+\\.(mp4|m3u8|flv|mkv))",
+                                    "cookies": "",
+                                    "addHeadersToVideo": {
+                                        "referer": "",
+                                    },
+                                },
+                            },
+                            "tier": 0,
+                        },
                     }
                 ]
             }
