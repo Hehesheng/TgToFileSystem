@@ -601,7 +601,7 @@ async def ani_source(api_key: str):
                                     "matchEpisodeSortFromName": "\\[(?<ep>\\d+)\\]",
                                 },
                                 "defaultResolution": "1080P",
-                                "filterByEpisodeSort": False,
+                                "filterByEpisodeSort": True,
                                 "filterBySubjectName": False,
                                 "selectMedia": {
                                     "distinguishSubjectName": True,
