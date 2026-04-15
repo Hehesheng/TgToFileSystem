@@ -45,7 +45,7 @@ app.add_middleware(
 # Mount static files for icon
 static_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend", "static")
 if os.path.exists(static_dir):
-    app.mount("/static", StaticFiles(directory=static_dir), name="static")
+    app.mount("/tg/static", StaticFiles(directory=static_dir), name="static")
 
 
 class TgToFileListRequestBody(BaseModel):
@@ -570,7 +570,7 @@ async def ani_source(api_key: str):
                         "arguments": {
                             "name": "TgToFileSystem",
                             "description": "Telegram media from TgToFileSystem (sign valid for 24h)",
-                            "iconUrl": f"{param.base.exposed_url}/static/icon.svg",
+                            "iconUrl": f"{param.base.exposed_url}/tg/static/icon.svg",
                             "searchConfig": {
                                 "searchUrl": search_url_template,
                                 "searchUseOnlyFirstWord": False,
