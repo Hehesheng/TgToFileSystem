@@ -375,7 +375,8 @@ async def ani_search(keyword: str, sign: str, limit: int = 50):
     """
     Ani player web-selector search endpoint.
 
-    Returns HTML page with search results that ani player can parse with CSS selectors.
+    Returns HTML page with ONE virtual subject entry (the search keyword).
+    animeko will then fetch the detail page to get all matching files as episodes.
     """
     try:
         # Verify sign and get client
@@ -384,6 +385,64 @@ async def ani_search(keyword: str, sign: str, limit: int = 50):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid sign")
 
         param = configParse.get_TgToFileSystemParameter()
+
+        # URL-encode keyword for detail page URL
+        encoded_keyword = quote(keyword)
+
+        # Detail page URL - contains the keyword for searching
+        detail_url = f"{param.base.exposed_url}/tg/api/v1/ani/detail/{encoded_keyword}?sign={sign}&limit={limit}"
+
+        # Return single virtual subject entry
+        # animeko Phase 2: extracts this link as the "subject"
+        search_html = f"""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>TgToFileSystem Search: {keyword}</title>
+</head>
+<body>
+  <div class="module-search">
+    <div class="module-card-list">
+    <div class="module-card-item">
+      <div class="module-card-item-info">
+        <div class="module-card-item-title">
+          <a href="{detail_url}" title="{keyword}">{keyword}</a>
+        </div>
+        <div class="module-card-item-desc">点击查看所有匹配结果</div>
+      </div>
+    </div>
+    </div>
+  </div>
+</body>
+</html>"""
+
+        return Response(search_html, media_type="text/html", status_code=status.HTTP_200_OK)
+
+    except Exception as err:
+        logger.error(f"{err=},{traceback.format_exc()}")
+        return Response(f"<html><body><error>{err}</error></body></html>", media_type="text/html", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@app.get("/tg/api/v1/ani/detail/{encoded_keyword}")
+@apiutils.atimeit
+async def ani_detail(encoded_keyword: str, sign: str, limit: int = 50):
+    """
+    Ani player detail page endpoint.
+
+    Returns HTML page with ALL matching files as "episodes".
+    animeko treats this as the "subject detail page" and extracts episode links.
+    """
+    try:
+        # Verify sign
+        clients_mgr = TgFileSystemClientManager.get_instance()
+        if not clients_mgr.verify_sign(sign):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid sign")
+
+        param = configParse.get_TgToFileSystemParameter()
+
+        # Decode keyword from URL
+        from urllib.parse import unquote
+        keyword = unquote(encoded_keyword)
 
         # Get client_id from sign
         sign_info = clients_mgr.parse_sign(sign)
@@ -401,8 +460,7 @@ async def ani_search(keyword: str, sign: str, limit: int = 50):
             limit=limit,
         )
 
-        # Build HTML page for web-selector parsing
-        # Structure: each result is a module-card-item with download link
+        # Build HTML page with all matching files as "episodes"
         html_items = []
         for row in results:
             chat_id = row[2]
@@ -410,11 +468,7 @@ async def ani_search(keyword: str, sign: str, limit: int = 50):
             file_name = row[7] or "unknown.tmp"
             msg_js = row[8]
 
-            # Generate unique file_id for this result
-            file_id = f"{chat_id}_{msg_id}"
-
-            # Detail page URL - animeko will fetch this as the "subject detail"
-            detail_url = f"{param.base.exposed_url}/tg/api/v1/ani/detail/{file_id}?sign={sign}"
+            download_url = f"{param.base.exposed_url}/tg/api/v1/file/get/{chat_id}/{msg_id}/{quote(file_name)}?sign={sign}"
 
             # Parse msg_js for size info
             try:
@@ -430,96 +484,28 @@ async def ani_search(keyword: str, sign: str, limit: int = 50):
 
             size_str = f"{file_size / 1024 / 1024:.1f}MB" if file_size > 0 else ""
 
-            # HTML item: link to detail page (not directly to video)
-            # title attribute contains filename for animeko's subject name extraction
+            # HTML item: each file is an "episode"
             html_items.append(f"""    <div class="module-card-item">
       <div class="module-card-item-info">
         <div class="module-card-item-title">
-          <a href="{detail_url}" title="{file_name}">{file_name}</a>
+          <a href="{download_url}" title="{file_name}">{file_name}</a>
         </div>
         <div class="module-card-item-desc">{size_str}</div>
       </div>
     </div>""")
 
-        # Return HTML directly with links to detail pages
-        # animeko flow: search → extract subject links → fetch detail page → extract episode links
-        search_html = f"""<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <title>TgToFileSystem Search: {keyword}</title>
-</head>
-<body>
-  <div class="module-search">
-    <div class="module-card-list">
-{"".join(html_items)}
-    </div>
-  </div>
-</body>
-</html>"""
-
-        return Response(search_html, media_type="text/html", status_code=status.HTTP_200_OK)
-
-    except Exception as err:
-        logger.error(f"{err=},{traceback.format_exc()}")
-        return Response(f"<html><body><error>{err}</error></body></html>", media_type="text/html", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
-@app.get("/tg/api/v1/ani/detail/{file_id}")
-@apiutils.atimeit
-async def ani_detail(file_id: str, sign: str):
-    """
-    Ani player detail page endpoint.
-
-    Returns HTML page with the video link for a specific file.
-    animeko treats this as the "subject detail page" and extracts episode links.
-    """
-    try:
-        # Verify sign
-        clients_mgr = TgFileSystemClientManager.get_instance()
-        if not clients_mgr.verify_sign(sign):
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid sign")
-
-        param = configParse.get_TgToFileSystemParameter()
-
-        # Parse file_id (format: chat_id_msg_id)
-        parts = file_id.split("_")
-        if len(parts) != 2:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid file_id format")
-        chat_id = int(parts[0])
-        msg_id = int(parts[1])
-
-        # Get file info from database
-        db = UserManager()
-        results = db.get_msg_by_chat_id_and_msg_id(chat_id, msg_id)
-
-        # Find the message
-        file_name = "unknown.tmp"
-        if results:
-            row = results[0]
-            file_name = row[7] or "unknown.tmp"
-
-        # Build video download URL
-        download_url = f"{param.base.exposed_url}/tg/api/v1/file/get/{chat_id}/{msg_id}/{quote(file_name)}?sign={sign}"
-
-        # Return HTML with single episode link
-        # animeko will use selectorChannelFormatNoChannel.selectEpisodes to extract this
+        # Return HTML with all episodes
+        # animeko Phase 3: extracts these links as "episodes"
         detail_html = f"""<!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>TgToFileSystem Detail: {file_name}</title>
+  <title>TgToFileSystem Detail: {keyword}</title>
 </head>
 <body>
   <div class="module-play">
     <div class="module-card-list">
-      <div class="module-card-item">
-        <div class="module-card-item-info">
-          <div class="module-card-item-title">
-            <a href="{download_url}" title="{file_name}">{file_name}</a>
-          </div>
-        </div>
-      </div>
+{"".join(html_items)}
     </div>
   </div>
 </body>
@@ -607,16 +593,16 @@ async def ani_source(api_key: str):
                                     "selectEpisodeLists": ".module-card-list",
                                     "selectEpisodesFromList": ".module-card-item>.module-card-item-info>.module-card-item-title>a",
                                     "selectEpisodeLinksFromList": "",
-                                    "matchEpisodeSortFromName": "(第\\s*(?<ep>.+)\\s*[话集])|(?<ep>\\d+)",
+                                    "matchEpisodeSortFromName": "(\[(?<ep>\d+)\])|(_(?<ep>\d+)_)|(第\s*(?<ep>\d+)\s*[话集])|(E(?<ep>\d+))",
                                 },
                                 "selectorChannelFormatNoChannel": {
                                     "selectEpisodes": ".module-card-item>.module-card-item-info>.module-card-item-title>a",
                                     "selectEpisodeLinks": "",
-                                    "matchEpisodeSortFromName": "(第\\s*(?<ep>\\d+)\\s*[话集])|(E(?<ep>\\d+))|(\\s(?<ep>\\d+)\\s)|(?<ep>\\d+)",
+                                    "matchEpisodeSortFromName": "(\[(?<ep>\d+)\])|(_(?<ep>\d+)_)|(第\s*(?<ep>\d+)\s*[话集])|(E(?<ep>\d+))",
                                 },
                                 "defaultResolution": "1080P",
-                                "filterByEpisodeSort": True,
-                                "filterBySubjectName": True,
+                                "filterByEpisodeSort": False,
+                                "filterBySubjectName": False,
                                 "selectMedia": {
                                     "distinguishSubjectName": True,
                                     "distinguishChannelName": True,
