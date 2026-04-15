@@ -5,7 +5,7 @@ import sys
 import logging
 import traceback
 from typing import Annotated
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 from datetime import datetime
 
 import uvicorn
@@ -21,6 +21,11 @@ from backend import apiutils
 from backend import api_implement as api
 from backend.TgFileSystemClientManager import TgFileSystemClientManager, EnumSignLevel
 from backend.UserManager import UserManager
+from backend.templates import (
+    format_rss_item, format_rss_xml, RSS_ERROR_TEMPLATE,
+    format_ani_search_html, ANI_SEARCH_ERROR_TEMPLATE,
+    format_ani_detail_item, format_ani_detail_html, ANI_DETAIL_ERROR_TEMPLATE,
+)
 
 logger = logging.getLogger(__file__.split("/")[-1])
 
@@ -331,30 +336,24 @@ async def rss_search(keyword: str, sign: str, limit: int = 50):
                 file_size = media.get("size", 0)
             size_str = f"{file_size / 1024 / 1024:.1f} MB" if file_size > 0 else ""
 
-            rss_items.append(f"""
-    <item>
-      <title>{file_name}</title>
-      <link>{download_url}</link>
-      <description>Size: {size_str}</description>
-      <pubDate>{pub_date}</pubDate>
-    </item>""")
+            rss_items.append(format_rss_item(
+                file_name=file_name,
+                download_url=download_url,
+                size_str=size_str,
+                pub_date=pub_date,
+            ))
 
-        rss_xml = f"""<?xml version="1.0" encoding="UTF-8"?>
-<rss version="2.0">
-  <channel>
-    <title>TgToFileSystem Search: {keyword}</title>
-    <link>{param.base.exposed_url}</link>
-    <description>Telegram media search results</description>
-    <language>zh-CN</language>
-{"".join(rss_items)}
-  </channel>
-</rss>"""
+        rss_xml = format_rss_xml(
+            keyword=keyword,
+            exposed_url=param.base.exposed_url,
+            rss_items="".join(rss_items),
+        )
 
         return Response(rss_xml, media_type="application/xml", status_code=status.HTTP_200_OK)
 
     except Exception as err:
         logger.error(f"{err=},{traceback.format_exc()}")
-        return Response(f"<error>{err}</error>", media_type="application/xml", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return Response(RSS_ERROR_TEMPLATE.format(error=err), media_type="application/xml", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 @app.get("/tg/api/v1/ani/search")
@@ -382,33 +381,13 @@ async def ani_search(keyword: str, sign: str, limit: int = 50):
 
         # Return single virtual subject entry
         # animeko Phase 2: extracts this link as the "subject"
-        search_html = f"""<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <title>TgToFileSystem Search: {keyword}</title>
-</head>
-<body>
-  <div class="module-search">
-    <div class="module-card-list">
-    <div class="module-card-item">
-      <div class="module-card-item-info">
-        <div class="module-card-item-title">
-          <a href="{detail_url}" title="{keyword}">{keyword}</a>
-        </div>
-        <div class="module-card-item-desc">点击查看所有匹配结果</div>
-      </div>
-    </div>
-    </div>
-  </div>
-</body>
-</html>"""
+        search_html = format_ani_search_html(keyword=keyword, detail_url=detail_url)
 
         return Response(search_html, media_type="text/html", status_code=status.HTTP_200_OK)
 
     except Exception as err:
         logger.error(f"{err=},{traceback.format_exc()}")
-        return Response(f"<html><body><error>{err}</error></body></html>", media_type="text/html", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return Response(ANI_SEARCH_ERROR_TEMPLATE.format(error=err), media_type="text/html", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 @app.get("/tg/api/v1/ani/detail/{encoded_keyword}")
@@ -429,7 +408,6 @@ async def ani_detail(encoded_keyword: str, sign: str, limit: int = 50):
         param = configParse.get_TgToFileSystemParameter()
 
         # Decode keyword from URL
-        from urllib.parse import unquote
         keyword = unquote(encoded_keyword)
 
         # Get client_id from sign
@@ -473,37 +451,21 @@ async def ani_detail(encoded_keyword: str, sign: str, limit: int = 50):
             size_str = f"{file_size / 1024 / 1024:.1f}MB" if file_size > 0 else ""
 
             # HTML item: each file is an "episode"
-            html_items.append(f"""    <div class="module-card-item">
-      <div class="module-card-item-info">
-        <div class="module-card-item-title">
-          <a href="{download_url}" title="{file_name}">{file_name}</a>
-        </div>
-        <div class="module-card-item-desc">{size_str}</div>
-      </div>
-    </div>""")
+            html_items.append(format_ani_detail_item(
+                file_name=file_name,
+                download_url=download_url,
+                size_str=size_str,
+            ))
 
         # Return HTML with all episodes
         # animeko Phase 3: extracts these links as "episodes"
-        detail_html = f"""<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <title>TgToFileSystem Detail: {keyword}</title>
-</head>
-<body>
-  <div class="module-play">
-    <div class="module-card-list">
-{"".join(html_items)}
-    </div>
-  </div>
-</body>
-</html>"""
+        detail_html = format_ani_detail_html(keyword=keyword, html_items="".join(html_items))
 
         return Response(detail_html, media_type="text/html", status_code=status.HTTP_200_OK)
 
     except Exception as err:
         logger.error(f"{err=},{traceback.format_exc()}")
-        return Response(f"<html><body><error>{err}</error></body></html>", media_type="text/html", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return Response(ANI_DETAIL_ERROR_TEMPLATE.format(error=err), media_type="text/html", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 @app.get("/tg/api/v1/ani/source/{api_key}")
