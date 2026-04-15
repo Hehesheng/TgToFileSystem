@@ -12,6 +12,7 @@ import uvicorn
 from fastapi import FastAPI, status, Request, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from telethon import types, hints, utils
 from pydantic import BaseModel
 
@@ -40,6 +41,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Mount static files for icon
+static_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend", "static")
+if os.path.exists(static_dir):
+    app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 
 class TgToFileListRequestBody(BaseModel):
@@ -564,7 +570,7 @@ async def ani_source(api_key: str):
                         "arguments": {
                             "name": "TgToFileSystem",
                             "description": "Telegram media from TgToFileSystem (sign valid for 24h)",
-                            "iconUrl": f"{param.base.exposed_url}/favicon.ico",
+                            "iconUrl": f"{param.base.exposed_url}/static/icon.svg",
                             "searchConfig": {
                                 "searchUrl": search_url_template,
                                 "searchUseOnlyFirstWord": False,
