@@ -262,12 +262,6 @@ async def get_verify(id: str = None):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"{id=}")
 
 
-async def post_verify(body: TgToChatListRequestBody | None = None):
-    if not body or not body.token:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST)
-    return body
-
-
 @app.get("/tg/api/v1/rss/search")
 @apiutils.atimeit
 async def rss_search(keyword: str, sign: str, limit: int = 50):
