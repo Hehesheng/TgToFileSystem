@@ -71,6 +71,23 @@ class UserManager(object):
         )
         return res.fetchall()
 
+    def get_msg_by_chat_id_and_msg_id(
+        self,
+        chat_id: int,
+        msg_id: int,
+    ) -> list[any]:
+        """
+        Get a specific message by chat_id and msg_id.
+
+        Returns:
+            List containing the matching message (or empty if not found)
+        """
+        res = self.cur.execute(
+            "SELECT * FROM message WHERE chat_id = ? AND msg_id = ?",
+            (chat_id, msg_id),
+        )
+        return res.fetchall()
+
     def get_msg_by_chat_id_and_keyword(
         self,
         chat_ids: list[int],

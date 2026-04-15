@@ -491,18 +491,13 @@ async def ani_detail(file_id: str, sign: str):
 
         # Get file info from database
         db = UserManager()
-        results = db.get_msg_by_chat_id_and_keyword(
-            chat_ids=[chat_id],
-            keyword="",  # empty to get all messages
-            limit=100,
-        )
+        results = db.get_msg_by_chat_id_and_msg_id(chat_id, msg_id)
 
-        # Find the specific message
+        # Find the message
         file_name = "unknown.tmp"
-        for row in results:
-            if row[2] == chat_id and row[3] == msg_id:
-                file_name = row[7] or "unknown.tmp"
-                break
+        if results:
+            row = results[0]
+            file_name = row[7] or "unknown.tmp"
 
         # Build video download URL
         download_url = f"{param.base.exposed_url}/tg/api/v1/file/get/{chat_id}/{msg_id}/{quote(file_name)}?sign={sign}"
