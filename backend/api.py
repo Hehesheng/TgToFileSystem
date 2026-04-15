@@ -262,22 +262,10 @@ async def get_verify(id: str = None):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"{id=}")
 
 
-@app.get("/tg/api/v1/test", dependencies=[Depends(get_verify)])
-async def test_get_depends_verify_method(id: str, other: str = ""):
-    client_mgr = TgFileSystemClientManager.get_instance()
-    client = await client_mgr.get_client_force(id)
-    return Response((await client.client.get_me()).stringify())
-
-
 async def post_verify(body: TgToChatListRequestBody | None = None):
     if not body or not body.token:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST)
     return body
-
-
-@app.post("/tg/api/v1/test", dependencies=[Depends(post_verify)])
-async def test_get_depends_verify_method(body: TgToChatListRequestBody):
-    return Response()
 
 
 @app.get("/tg/api/v1/rss/search")
