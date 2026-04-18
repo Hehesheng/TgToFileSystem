@@ -418,7 +418,7 @@ class UserManager(object):
                     "sizes": self._compact_photo_sizes(photo.sizes),
                 }
                 # Keep video_cover if exists (for motion photo)
-                if media.video_cover:
+                if hasattr(media, 'video_cover') and media.video_cover:
                     result["video_cover"] = {
                         "id": media.video_cover.id,
                         "access_hash": media.video_cover.access_hash,
@@ -440,7 +440,7 @@ class UserManager(object):
                     "video_thumbs": self._compact_thumbs(doc.video_thumbs) if doc.video_thumbs else None,
                 }
                 # Keep video_cover if exists
-                if media.video_cover:
+                if hasattr(media, 'video_cover') and media.video_cover:
                     result["video_cover"] = {
                         "id": media.video_cover.id,
                         "access_hash": media.video_cover.access_hash,
@@ -590,11 +590,12 @@ class UserManager(object):
                 msg_type = UserManager.MessageTypeEnum.PHOTO.value
             elif isinstance(msg.media, types.MessageMediaDocument):
                 document = msg.media.document
-                mime_type = document.mime_type
-                for attr in document.attributes:
-                    if isinstance(attr, types.DocumentAttributeFilename):
-                        file_name = attr.file_name
-                msg_type = UserManager.MessageTypeEnum.FILE.value
+                if isinstance(document, types.Document):
+                    mime_type = document.mime_type
+                    for attr in document.attributes:
+                        if isinstance(attr, types.DocumentAttributeFilename):
+                            file_name = attr.file_name
+                    msg_type = UserManager.MessageTypeEnum.FILE.value
         except Exception as err:
             logger.error(f"{err=},{traceback.format_exc()}")
 
